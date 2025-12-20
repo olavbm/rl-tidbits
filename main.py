@@ -8,11 +8,14 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 
+from agents.wrappers import StandingRewardWrapper
+
 RUNS_DIR = Path("runs")
 
 
 def make_env():
     env = gym.make("Humanoid-v5")
+    env = StandingRewardWrapper(env, velocity_penalty=5.0)
     env = Monitor(env)  # Track episode rewards and lengths
     return env
 
@@ -25,7 +28,7 @@ def train(total_timesteps: int = 1_000_000):
     print(f"Run directory: {run_dir}")
 
     # Vectorized env with normalization (critical for performance!)
-    n_envs = 8  # Match performance core count
+    n_envs = 12  # Match performance core count
     env = SubprocVecEnv([make_env for _ in range(n_envs)])
     env = VecNormalize(env, norm_obs=True, norm_reward=True)
 
@@ -84,7 +87,11 @@ def evaluate(checkpoint: str | None = None):
     print(f"Loading normalizer: {normalizer_path}")
 
     # Load and evaluate with rendering
-    env = DummyVecEnv([lambda: gym.make("Humanoid-v5", render_mode="human")])
+    def make_eval_env():
+        env = gym.make("Humanoid-v5", render_mode="human")
+        return StandingRewardWrapper(env, velocity_penalty=1.0)
+
+    env = DummyVecEnv([make_eval_env])
     env = VecNormalize.load(normalizer_path, env)
     env.training = False  # Don't update stats during eval
     env.norm_reward = False
