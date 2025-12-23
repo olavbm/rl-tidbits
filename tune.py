@@ -110,6 +110,13 @@ def objective(trial: optuna.Trial) -> float:
     finally:
         train_env.close()
         eval_env.close()
+        train_env.close()
+        eval_env.close()
+        del model
+        del train_env
+        del eval_env
+        import gc
+        gc.collect()
 
     if eval_callback.is_pruned:
         raise optuna.TrialPruned()
