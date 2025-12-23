@@ -38,6 +38,7 @@ def train(total_timesteps: int = 1_000_000):
         env,
         verbose=1,
         tensorboard_log=str(run_dir),
+        device="cuda"
     )
 
     # Save checkpoints every 50k steps (also to run_dir)
