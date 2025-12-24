@@ -9,4 +9,4 @@ rsync -avz --exclude '.git' --exclude '.venv' --exclude 'runs' --exclude 'tuning
     ./ "$REMOTE:$REMOTE_DIR/"
 
 echo "Starting tuning on $REMOTE..."
-ssh -t "$REMOTE" "cd $REMOTE_DIR && uv run python tune.py $*"
+ssh -t "$REMOTE" "cd $REMOTE_DIR && uv run python $*"

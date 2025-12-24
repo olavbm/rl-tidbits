@@ -2,22 +2,12 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
-import gymnasium as gym
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import CheckpointCallback
-from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 
-from agents.wrappers import VelocityRewardWrapper
+from agents.training import create_render_env, create_sac_model, create_training_env
 
 RUNS_DIR = Path("runs")
-
-
-def make_env():
-    env = gym.make("Humanoid-v5")
-    env = VelocityRewardWrapper(env, velocity_bonus=1.0)
-    env = Monitor(env)  # Track episode rewards and lengths
-    return env
 
 
 def train(total_timesteps: int = 10_000_000):
@@ -27,23 +17,24 @@ def train(total_timesteps: int = 10_000_000):
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"Run directory: {run_dir}")
 
-    # Vectorized env with normalization (critical for performance!)
-    n_envs = 16
-    env = SubprocVecEnv([make_env for _ in range(n_envs)])
-    env = VecNormalize(env, norm_obs=True, norm_reward=True)
+    # Vectorized env with normalization
+    env = create_training_env(n_envs=8)
 
-    # SAC with TensorBoard logging (logs go to run_dir)
-    model = SAC(
-        "MlpPolicy",
-        env,
+    # SAC with TensorBoard logging
+    model = create_sac_model(
+        env=env,
+        learning_rate=3e-4,
+        net_arch=[256, 256],
+        tensorboard_log=run_dir,
+        buffer_size=200_000,
+        batch_size=2048,
+        train_freq=4096,
         verbose=1,
-        tensorboard_log=str(run_dir),
-        device="cuda"
     )
 
     # Save checkpoints every 50k steps (also to run_dir)
     checkpoint_callback = CheckpointCallback(
-        save_freq=20_000,
+        save_freq=500_000,
         save_path=str(run_dir),
         name_prefix="checkpoint",
         save_vecnormalize=True,
@@ -88,15 +79,7 @@ def evaluate(checkpoint: str | None = None):
     print(f"Loading normalizer: {normalizer_path}")
 
     # Load and evaluate with rendering
-    def make_eval_env():
-        env = gym.make("Humanoid-v5", render_mode="human")
-        return VelocityRewardWrapper(env, velocity_bonus=1.0)
-
-    env = DummyVecEnv([make_eval_env])
-    env = VecNormalize.load(normalizer_path, env)
-    env.training = False  # Don't update stats during eval
-    env.norm_reward = False
-
+    env = create_render_env(normalizer_path)
     model = SAC.load(checkpoint_path, env=env)
 
     obs = env.reset()

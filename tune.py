@@ -1,38 +1,25 @@
 """Hyperparameter tuning with Optuna for SAC on Humanoid-v5."""
 
 import argparse
+import random
 from datetime import datetime
 from pathlib import Path
 
-import gymnasium as gym
-import numpy as np
 import optuna
 from optuna.pruners import MedianPruner
-from stable_baselines3 import SAC
-from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
-from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
+from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 
-from agents.wrappers import VelocityRewardWrapper
+from agents.training import create_eval_env, create_sac_model, create_training_env
 
 TUNING_DIR = Path("tuning")
-N_ENVS = 32
+N_ENVS = 16
 N_EVAL_EPISODES = 5
-EVAL_FREQ = 40_000
-TOTAL_TIMESTEPS = 3_000_000
+EVAL_FREQ = 50_000
+TOTAL_TIMESTEPS = 10_000_000
 
-NET_ARCH_OPTIONS = {
-    "small": [64, 64],
-    "medium": [256, 256],
-    "large": [400, 300],
-}
-
-
-def make_env():
-    env = gym.make("Humanoid-v5")
-    env = VelocityRewardWrapper(env, velocity_bonus=1.0)
-    env = Monitor(env)
-    return env
+# Fixed best params from previous tuning
+BEST_NET_ARCH = [256, 256]
+BEST_LEARNING_RATE = 7.183183678075811e-05
 
 
 class TrialEvalCallback(EvalCallback):
@@ -67,31 +54,32 @@ class TrialEvalCallback(EvalCallback):
 def objective(trial: optuna.Trial) -> float:
     """Optuna objective function for hyperparameter optimization."""
 
-    # Suggest hyperparameters
-    net_arch_type = trial.suggest_categorical("net_arch", list(NET_ARCH_OPTIONS.keys()))
-    net_arch = NET_ARCH_OPTIONS[net_arch_type]
-    learning_rate = trial.suggest_float("learning_rate", 1e-5, 1e-3, log=True)
+    # Suggest entropy hyperparameters
+    ent_coef_type = trial.suggest_categorical("ent_coef_type", ["auto", "fixed"])
 
-    # Create training env
-    train_env = SubprocVecEnv([make_env for _ in range(N_ENVS)])
-    train_env = VecNormalize(train_env, norm_obs=True, norm_reward=True)
+    if ent_coef_type == "auto":
+        ent_coef = "auto"
+        # Search target entropy: default is -17 (action_dim), try higher values
+        target_entropy = trial.suggest_float("target_entropy", -16.0, -4.0)
+    else:
+        # Fixed entropy coefficient, no auto-tuning
+        ent_coef = trial.suggest_float("ent_coef", 0.05, 0.5, log=True)
+        target_entropy = "auto"  # Ignored when ent_coef is fixed
 
-    # Create eval env (single env, no normalization updates)
-    eval_env = SubprocVecEnv([make_env for _ in range(1)])
-    eval_env = VecNormalize(eval_env, norm_obs=True, norm_reward=False, training=False)
-    # Sync normalization stats from training env
-    eval_env.obs_rms = train_env.obs_rms
+    # Create environments
+    train_env = create_training_env(n_envs=N_ENVS)
+    eval_env = create_eval_env(train_env=train_env)
 
     # Create model with TensorBoard logging
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    trial_dir = TUNING_DIR / f"trial_{trial.number:03d}_{timestamp}"
-    model = SAC(
-        "MlpPolicy",
-        train_env,
-        learning_rate=learning_rate,
-        policy_kwargs=dict(net_arch=dict(pi=net_arch, qf=net_arch)),
-        tensorboard_log=str(trial_dir),
-        verbose=0,
+    trial_dir = TUNING_DIR / f"trial_{random.randint(0, 1000):04d}_{trial.number:03d}_{timestamp}"
+    model = create_sac_model(
+        env=train_env,
+        learning_rate=BEST_LEARNING_RATE,
+        net_arch=BEST_NET_ARCH,
+        tensorboard_log=trial_dir,
+        ent_coef=ent_coef,
+        target_entropy=target_entropy,
     )
 
     # Create callback for evaluation and pruning
@@ -102,8 +90,16 @@ def objective(trial: optuna.Trial) -> float:
         n_eval_episodes=N_EVAL_EPISODES,
     )
 
+    # Checkpoint every 500k steps
+    checkpoint_callback = CheckpointCallback(
+        save_freq=500_000 // N_ENVS,
+        save_path=str(trial_dir),
+        name_prefix="checkpoint",
+        save_vecnormalize=True,
+    )
+
     try:
-        model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=eval_callback)
+        model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=[eval_callback, checkpoint_callback])
     except AssertionError:
         # Handle early termination from pruning
         pass
@@ -128,7 +124,7 @@ def main():
     parser = argparse.ArgumentParser(description="Hyperparameter tuning for SAC")
     parser.add_argument("--n-trials", type=int, default=25, help="Number of trials")
     parser.add_argument("--resume", action="store_true", help="Resume existing study")
-    parser.add_argument("--study-name", type=str, default="sac_humanoid", help="Study name")
+    parser.add_argument("--study-name", type=str, default="sac_humanoid_entropy", help="Study name")
     args = parser.parse_args()
 
     TUNING_DIR.mkdir(exist_ok=True)
@@ -138,7 +134,7 @@ def main():
         study_name=args.study_name,
         storage=storage,
         direction="maximize",
-        pruner=MedianPruner(n_startup_trials=3, n_warmup_steps=5),
+        pruner=MedianPruner(n_startup_trials=3, n_warmup_steps=20),  # 25 * 40k = 1M min
         load_if_exists=True,  # Always resume if study exists
     )
 
