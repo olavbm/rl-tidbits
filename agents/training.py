@@ -8,24 +8,25 @@ from stable_baselines3 import SAC
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 
-from agents.wrappers import SprintRewardWrapper, VelocityRewardWrapper
-
-# PyTorch performance optimizations
+# PyTorch optimizations
 torch.backends.cudnn.benchmark = True
 torch.set_float32_matmul_precision("medium")
 
+# Reward parameters for fast running
+FORWARD_REWARD_WEIGHT = 10.0  # 8x default (1.25)
+HEALTHY_REWARD = 1.0          # reduced from default (5.0)
+CTRL_COST_WEIGHT = 0.05       # reduced from default (0.1)
 
-def make_env(render_mode: str | None = None, sprint: bool = True):
-    """Create a single Humanoid-v5 environment with reward wrapper.
 
-    Args:
-        sprint: If True, use aggressive speed reward. If False, use gentle velocity bonus.
-    """
-    env = gym.make("Humanoid-v5", render_mode=render_mode)
-    if sprint:
-        env = SprintRewardWrapper(env, speed_weight=5.0, survive_weight=0.5)
-    else:
-        env = VelocityRewardWrapper(env, velocity_bonus=1.0)
+def make_env(render_mode: str | None = None):
+    """Create a single Humanoid-v5 environment tuned for fast running."""
+    env = gym.make(
+        "Humanoid-v5",
+        render_mode=render_mode,
+        forward_reward_weight=FORWARD_REWARD_WEIGHT,
+        healthy_reward=HEALTHY_REWARD,
+        ctrl_cost_weight=CTRL_COST_WEIGHT,
+    )
     env = Monitor(env)
     return env
 
@@ -49,8 +50,13 @@ def create_eval_env(train_env: VecNormalize | None = None):
 def create_render_env(normalizer_path: Path | str):
     """Create environment for visualization with loaded normalizer."""
     def make_render_env():
-        env = gym.make("Humanoid-v5", render_mode="human")
-        return VelocityRewardWrapper(env, velocity_bonus=1.0)
+        return gym.make(
+            "Humanoid-v5",
+            render_mode="human",
+            forward_reward_weight=FORWARD_REWARD_WEIGHT,
+            healthy_reward=HEALTHY_REWARD,
+            ctrl_cost_weight=CTRL_COST_WEIGHT,
+        )
 
     env = DummyVecEnv([make_render_env])
     env = VecNormalize.load(str(normalizer_path), env)
@@ -66,7 +72,7 @@ def create_sac_model(
     tensorboard_log: str | Path | None = None,
     buffer_size: int = 400_000,
     batch_size: int = 10_000,
-    gradient_steps: int = 1,
+    gradient_steps: int = 2,
     train_freq: int = 8,
     device: str = "cuda",
     verbose: int = 0,
