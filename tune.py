@@ -185,7 +185,7 @@ def main():
 
     print("\n" + "=" * 50)
     print(f"Tuning complete. Study ID: {study_id}")
-    print(f"Best trial:")
+    print("Best trial:")
     print(f"  Value (mean reward): {study.best_trial.value:.2f}")
     print("  Params:")
     for key, value in study.best_trial.params.items():
