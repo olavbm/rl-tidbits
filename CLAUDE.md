@@ -27,15 +27,6 @@ ruff check . --fix
 # Format code
 ruff format .
 
-# Run all tests
-pytest
-
-# Run single test file
-pytest tests/test_example.py
-
-# Run specific test
-pytest tests/test_example.py::test_function_name -v
-
 # Run a script
 python main.py
 ```
@@ -43,7 +34,6 @@ python main.py
 ## Architecture
 
 - `agents/` - RL agent implementations
-- `tests/` - Test files (pytest)
 - `main.py` - Entry point for experiments
 
 ## RL Conventions
