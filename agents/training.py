@@ -73,7 +73,7 @@ def create_sac_model(
     buffer_size: int = 400_000,
     batch_size: int = 10_000,
     gradient_steps: int = 2,
-    train_freq: int = 8,
+    train_freq: int = 4,
     device: str = "cuda",
     verbose: int = 0,
     compile_policy: bool = True,

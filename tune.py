@@ -14,17 +14,19 @@ from agents.training import create_eval_env, create_sac_model, create_training_e
 
 TUNING_DIR = Path("tuning")
 N_ENVS = 16
-N_EVAL_EPISODES = 5
-EVAL_FREQ = 100_000      # doubled (gradient_steps=2 makes training slower)
+N_EVAL_EPISODES = 4
+EVAL_FREQ = 20_000      # doubled (gradient_steps=2 makes training slower)
 TOTAL_TIMESTEPS = 2_000_000  # reduced for faster iteration
+SAVE_FREQ = 100_000
 
 BEST_LEARNING_RATE = 7.183183678075811e-05
 
 NET_ARCH_OPTIONS = {
-    "small": [64, 64],
-    "deep": [64, 64, 64, 64],
-    "medium": [256, 256],
-    "large": [512, 512],
+    "small": [64]*2,
+    "deep": [64]*4,
+    "medium": [256]*4,
+    "large": [512]*3,
+    "large_deep": [512]*5
 }
 
 
@@ -60,6 +62,7 @@ class TrialEvalCallback(EvalCallback):
 def objective(trial: optuna.Trial) -> float:
     """Optuna objective function for hyperparameter optimization."""
     study_id = trial.study.user_attrs["study_id"]
+    trial.set_user_attr("study_id", study_id)  # Tag trial for filtering
 
     # Suggest hyperparameters
     net_arch_type = trial.suggest_categorical("net_arch", list(NET_ARCH_OPTIONS.keys()))
@@ -114,7 +117,7 @@ def objective(trial: optuna.Trial) -> float:
 
     # Checkpoint every 500k steps
     checkpoint_callback = CheckpointCallback(
-        save_freq=500_000 // N_ENVS,
+        save_freq=SAVE_FREQ // N_ENVS,
         save_path=str(trial_dir),
         name_prefix="checkpoint",
         save_vecnormalize=True,
@@ -166,12 +169,13 @@ def main():
     short_hash = hashlib.md5(f"{args.study_name}_{timestamp}".encode()).hexdigest()[:6]
     study_id = f"{timestamp}_{short_hash}"
 
+    # Use unique study name per run to avoid pruning against old trials with different reward params
+    unique_study_name = f"{args.study_name}_{study_id}"
     study = optuna.create_study(
-        study_name=args.study_name,
+        study_name=unique_study_name,
         storage=storage,
         direction="maximize",
-        pruner=MedianPruner(n_startup_trials=3, n_warmup_steps=10),
-        load_if_exists=True,
+        pruner=MedianPruner(n_startup_trials=5, n_warmup_steps=10),
     )
     study.set_user_attr("study_id", study_id)
 
@@ -181,14 +185,24 @@ def main():
     print(f"Storage: {storage}")
     print()
 
-    study.optimize(objective, n_trials=args.n_trials, show_progress_bar=True)
+    study.optimize(objective, n_trials=args.n_trials, show_progress_bar=True, n_jobs=4)
+
+    # Find best trial from THIS run only (filter by study_id in user_attrs)
+    current_run_trials = [
+        t for t in study.trials
+        if t.user_attrs.get("study_id") == study_id and t.value is not None
+    ]
+    if current_run_trials:
+        best_current = max(current_run_trials, key=lambda t: t.value)
+    else:
+        best_current = study.best_trial  # fallback
 
     print("\n" + "=" * 50)
     print(f"Tuning complete. Study ID: {study_id}")
-    print("Best trial:")
-    print(f"  Value (mean reward): {study.best_trial.value:.2f}")
+    print(f"Best trial (this run): {best_current.number}")
+    print(f"  Value (mean reward): {best_current.value:.2f}")
     print("  Params:")
-    for key, value in study.best_trial.params.items():
+    for key, value in best_current.params.items():
         print(f"    {key}: {value}")
 
 

@@ -206,10 +206,8 @@ def resume(resume_arg: str, total_timesteps: int = 5_000_000, n_envs: int = 16):
     print(f"Normalizer: {normalizer_path}")
     print_checkpoint_hyperparams(checkpoint)
 
-    # Create new run directory for continued training
-    run_name = f"resumed_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    run_dir = RUNS_DIR / run_name
-    run_dir.mkdir(parents=True, exist_ok=True)
+    # Continue in original trial directory
+    run_dir = checkpoint.parent
     print(f"Output directory: {run_dir}")
 
     # Create base env WITHOUT VecNormalize wrapper, then load normalizer

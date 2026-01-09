@@ -2,6 +2,7 @@
 
 import argparse
 import io
+import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
@@ -12,6 +13,8 @@ from stable_baselines3 import SAC
 from agents.training import create_render_env
 
 TUNING_DIR = Path("tuning")
+REMOTE_HOST = "hoppetusse"
+REMOTE_DIR = "dev/python/rl-tidbits/tuning"
 
 
 def _fix_compiled_state_dict(state_dict: dict) -> dict:
@@ -23,12 +26,33 @@ def _fix_compiled_state_dict(state_dict: dict) -> dict:
     return fixed
 
 
+def sync_from_remote(study_id: str, trial_num: int | None = None) -> bool:
+    """Sync trial files from remote host. Returns True if successful."""
+    if trial_num is not None:
+        remote_path = f"{REMOTE_HOST}:{REMOTE_DIR}/{study_id}/trial_{trial_num:03d}/"
+        local_path = TUNING_DIR / study_id / f"trial_{trial_num:03d}"
+    else:
+        remote_path = f"{REMOTE_HOST}:{REMOTE_DIR}/{study_id}/"
+        local_path = TUNING_DIR / study_id
+
+    local_path.mkdir(parents=True, exist_ok=True)
+
+    print(f"Syncing from {remote_path}...")
+    result = subprocess.run(
+        ["rsync", "-avP", remote_path, str(local_path) + "/"],
+        capture_output=False,
+    )
+    return result.returncode == 0
+
+
 def list_trials(study_id: str):
     """List all trials for a study."""
     study_dir = TUNING_DIR / study_id
     if not study_dir.exists():
-        print(f"Study not found: {study_dir}")
-        return
+        print(f"Study not found locally, syncing from {REMOTE_HOST}...")
+        if not sync_from_remote(study_id):
+            print("Failed to sync study from remote")
+            return
 
     print(f"Study: {study_id}")
     print(f"Path: {study_dir}")
@@ -50,9 +74,19 @@ def list_trials(study_id: str):
         print(f"  Trial {trial_num}: {checkpoint_info} | {trial_dir}")
 
 
+def _extract_steps(checkpoint: Path) -> int:
+    """Extract step count from checkpoint filename for sorting."""
+    # checkpoint_500000_steps.zip -> 500000
+    parts = checkpoint.stem.split("_")
+    for part in parts:
+        if part.isdigit():
+            return int(part)
+    return 0
+
+
 def find_latest_checkpoint(trial_dir: Path) -> tuple[Path, Path] | None:
     """Find the latest checkpoint and normalizer in a trial directory."""
-    checkpoints = sorted(trial_dir.glob("checkpoint_*.zip"))
+    checkpoints = sorted(trial_dir.glob("checkpoint_*.zip"), key=_extract_steps)
     if not checkpoints:
         return None
 
@@ -82,14 +116,22 @@ def evaluate(study_id: str, trial_num: int):
     """Evaluate a specific trial with human rendering."""
     trial_dir = TUNING_DIR / study_id / f"trial_{trial_num:03d}"
 
+    # Auto-sync from remote if not found locally
     if not trial_dir.exists():
-        print(f"Trial not found: {trial_dir}")
-        return
+        print(f"Trial not found locally, syncing from {REMOTE_HOST}...")
+        if not sync_from_remote(study_id, trial_num):
+            print("Failed to sync trial from remote")
+            return
 
     result = find_latest_checkpoint(trial_dir)
     if result is None:
-        print(f"No checkpoint found in {trial_dir}")
-        return
+        # Try syncing again in case files were missing
+        print(f"No checkpoint found, trying to sync from {REMOTE_HOST}...")
+        sync_from_remote(study_id, trial_num)
+        result = find_latest_checkpoint(trial_dir)
+        if result is None:
+            print(f"No checkpoint found in {trial_dir}")
+            return
 
     checkpoint_path, normalizer_path = result
 
@@ -204,7 +246,9 @@ def evaluate_checkpoint(checkpoint_path: str):
 def main():
     parser = argparse.ArgumentParser(description="Evaluate tuning trials")
     parser.add_argument("--list", type=str, metavar="STUDY_ID", help="List trials for a study")
-    parser.add_argument("target", type=str, nargs="?", help="STUDY_ID:TRIAL_NUM or path to checkpoint")
+    parser.add_argument(
+        "target", type=str, nargs="?", help="STUDY_ID:TRIAL_NUM or checkpoint path"
+    )
     args = parser.parse_args()
 
     if args.list:
