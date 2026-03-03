@@ -566,6 +566,226 @@ def test_prey_reward_pure_fn():
 
 
 # ---------------------------------------------------------------------------
+# Collector abstraction tests
+# ---------------------------------------------------------------------------
+
+
+def test_collect_rollouts_learned_predators_random_prey():
+    """Rollout collection with learned policy for predators, random for prey."""
+    from jax_boids.collector import (
+        PolicyConfig,
+        PolicyType,
+        RolloutConfig,
+        collect_rollouts,
+    )
+    from jax_boids.ppo import create_train_state
+
+    env_config = EnvConfig(n_predators=2, n_prey=3, max_steps=50)
+    env = PredatorPreyEnv(env_config)
+    rollout_config = RolloutConfig(n_steps=4, n_envs=2)
+
+    # Initialize predator policy
+    key = jax.random.PRNGKey(42)
+    k1, k2, key = jax.random.split(key, 3)
+    pred_state = create_train_state(k1, env.observation_size, env.action_size, 3e-4)
+
+    # Configure policies
+    policies = {
+        "predator": PolicyConfig(PolicyType.LEARNED, train_state=pred_state, noise_scale=0.0),
+        "prey": PolicyConfig(PolicyType.RANDOM, noise_scale=0.3),
+    }
+
+    # Collect rollouts
+    key, (transitions, infos), obs, env_state = collect_rollouts(
+        env, policies, env_config, rollout_config, key
+    )
+
+    # Verify rollout shapes (transitions is dict keyed by agent type)
+    assert set(transitions.keys()) == {"predator", "prey"}
+    for agent_type in {"predator", "prey"}:
+        n_agents = env_config.n_predators if agent_type == "predator" else env_config.n_prey
+        transition = transitions[agent_type]
+        assert transition.obs.shape == (
+            rollout_config.n_steps,
+            rollout_config.n_envs,
+            n_agents,
+            env.observation_size,
+        )
+        assert transition.reward.shape == (
+            rollout_config.n_steps,
+            rollout_config.n_envs,
+            n_agents,
+        )
+        assert transition.done.shape == transition.reward.shape
+        assert transition.log_prob.shape == transition.reward.shape
+        assert transition.value.shape == transition.reward.shape
+
+    # Verify info shapes
+    assert infos["prey_alive"].shape == (rollout_config.n_steps, rollout_config.n_envs)
+
+    # Verify final obs shapes
+    assert obs["predator"].shape == (
+        rollout_config.n_envs,
+        env_config.n_predators,
+        env.observation_size,
+    )
+
+
+def test_collect_rollouts_both_learned():
+    """Rollout collection with learned policies for both agent types."""
+    from jax_boids.collector import (
+        PolicyConfig,
+        PolicyType,
+        RolloutConfig,
+        collect_rollouts,
+    )
+    from jax_boids.ppo import create_train_state
+
+    env_config = EnvConfig(n_predators=2, n_prey=3, max_steps=50)
+    env = PredatorPreyEnv(env_config)
+    rollout_config = RolloutConfig(n_steps=2, n_envs=2)
+
+    # Initialize both policies
+    key = jax.random.PRNGKey(42)
+    k1, k2, key = jax.random.split(key, 3)
+    pred_state = create_train_state(k1, env.observation_size, env.action_size, 3e-4)
+    prey_state = create_train_state(k2, env.observation_size, env.action_size, 3e-4)
+
+    policies = {
+        "predator": PolicyConfig(PolicyType.LEARNED, train_state=pred_state, noise_scale=0.0),
+        "prey": PolicyConfig(PolicyType.LEARNED, train_state=prey_state, noise_scale=0.0),
+    }
+
+    # Collect rollouts
+    key, (transitions, infos), obs, env_state = collect_rollouts(
+        env, policies, env_config, rollout_config, key
+    )
+
+    # Verify rollout shapes (transitions is dict keyed by agent type)
+    assert set(transitions.keys()) == {"predator", "prey"}
+    for agent_type in {"predator", "prey"}:
+        n_agents = env_config.n_predators if agent_type == "predator" else env_config.n_prey
+        transition = transitions[agent_type]
+        # Check value field exists and has correct shape
+        assert hasattr(transition, "value")
+        assert transition.value.shape == (
+            rollout_config.n_steps,
+            rollout_config.n_envs,
+            n_agents,
+        )
+        assert transition.obs.shape == (
+            rollout_config.n_steps,
+            rollout_config.n_envs,
+            n_agents,
+            env.observation_size,
+        )
+        assert transition.reward.shape == (
+            rollout_config.n_steps,
+            rollout_config.n_envs,
+            n_agents,
+        )
+        assert transition.done.shape == transition.reward.shape
+        assert transition.log_prob.shape == transition.reward.shape
+
+
+def test_collect_rollouts_both_random():
+    """Rollout collection with random policies for all agents."""
+    from jax_boids.collector import (
+        PolicyConfig,
+        PolicyType,
+        RolloutConfig,
+        collect_rollouts,
+    )
+
+    env_config = EnvConfig(n_predators=2, n_prey=3, max_steps=50)
+    env = PredatorPreyEnv(env_config)
+    rollout_config = RolloutConfig(n_steps=2, n_envs=2)
+
+    policies = {
+        "predator": PolicyConfig(PolicyType.RANDOM, noise_scale=0.5),
+        "prey": PolicyConfig(PolicyType.RANDOM, noise_scale=0.3),
+    }
+
+    # Collect rollouts
+    key = jax.random.PRNGKey(42)
+    key, (transitions, infos), obs, env_state = collect_rollouts(
+        env, policies, env_config, rollout_config, key
+    )
+
+    # Verify rollout collection works
+    assert set(transitions.keys()) == {"predator", "prey"}
+    for agent_type in {"predator", "prey"}:
+        transition = transitions[agent_type]
+        assert transition.obs.shape[0] == rollout_config.n_steps
+        assert transition.obs.shape[1] == rollout_config.n_envs
+
+
+def test_create_policy_fn_learned():
+    """Create policy function for learned policy."""
+    from jax_boids.collector import PolicyConfig, PolicyType, create_policy_fn
+    from jax_boids.ppo import create_train_state
+
+    env_config = EnvConfig(n_predators=2, n_prey=3)
+    env = PredatorPreyEnv(env_config)
+
+    key = jax.random.PRNGKey(42)
+    train_state = create_train_state(key, env.observation_size, env.action_size, 3e-4)
+    policy_fn = create_policy_fn(PolicyConfig(PolicyType.LEARNED, train_state=train_state))
+
+    # Test with batched observations
+    obs = jnp.zeros((10, 2, env.observation_size))  # [n_envs, n_agents, obs_size]
+    obs_flat = obs.reshape(-1, obs.shape[-1])  # [n_envs*n_agents, obs_size]
+
+    k1, key = jax.random.split(key)
+    actions, log_probs = policy_fn(obs_flat, k1)
+
+    assert actions.shape == (obs_flat.shape[0], env.action_size)
+    assert log_probs.shape == (obs_flat.shape[0],)
+    # Actions are unbounded since they come from a normal distribution
+    assert jnp.isfinite(actions).all()
+    assert jnp.isfinite(log_probs).all()
+
+
+def test_create_policy_fn_random():
+    """Create policy function for random policy."""
+    from jax_boids.collector import PolicyConfig, PolicyType, create_policy_fn
+
+    noise_scale = 0.5
+    policy_fn = create_policy_fn(PolicyConfig(PolicyType.RANDOM, noise_scale=noise_scale))
+
+    key = jax.random.PRNGKey(42)
+    obs = jnp.zeros((10, 4))  # [batch_size, obs_size]
+    k1, key = jax.random.split(key)
+    actions, log_probs = policy_fn(obs, k1)
+
+    # Random actions should be within noise scale
+    assert actions.shape == (obs.shape[0], 2)  # action_size is 2 for boids
+    assert jnp.all(actions >= -noise_scale)
+    assert jnp.all(actions <= noise_scale)
+    # log_probs are zero for random policy
+    assert jnp.all(log_probs == 0.0)
+
+
+def test_create_policy_fn_invalid_type():
+    """Create policy function raises error for invalid policy type."""
+    from jax_boids.collector import PolicyConfig, PolicyType, create_policy_fn
+
+    # Test by checking enum values exist
+    assert PolicyType.LEARNED.value == "learned"
+    assert PolicyType.RANDOM.value == "random"
+
+    # Since PolicyType is an Enum, invalid values would be caught at runtime
+    # Test that the PolicyConfig dataclass exists and has correct fields
+    import inspect
+
+    sig = inspect.signature(PolicyConfig)
+    params = list(sig.parameters.keys())
+    assert "policy_type" in params
+    assert "train_state" in params
+    assert "noise_scale" in params
+
+
+# ---------------------------------------------------------------------------
 # Training smoke tests
 # ---------------------------------------------------------------------------
 

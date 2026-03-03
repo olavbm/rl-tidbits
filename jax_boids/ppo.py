@@ -15,6 +15,13 @@ from flax.training.train_state import TrainState
 from jax_boids.networks import ActorCritic
 
 
+from typing import Callable
+
+from jax_boids.networks import NetworkOutput
+
+PolicyFunction = Callable[[chex.Array, TrainState], NetworkOutput]
+
+
 class Transition(NamedTuple):
     """Single transition for PPO."""
 

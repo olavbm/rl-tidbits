@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance for AI coding assistants working with this repository.
 
 ## Project Overview
 
@@ -9,14 +9,12 @@ RL-tidbits is a collection of reinforcement learning experiments and agents buil
 ## Commands
 
 ```bash
-# Create mamba environment
-mamba env create -f environment.yml
+# Install and activate (using uv)
+uv sync
+source .venv/bin/activate
 
-# Activate environment
-mamba activate rl-tidbits
-
-# Update environment after changing environment.yml
-mamba env update -f environment.yml --prune
+# Install dev dependencies
+uv sync --all-extras
 
 # Run linter
 ruff check .

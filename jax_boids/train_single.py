@@ -12,12 +12,12 @@ import jax
 import orbax.checkpoint as ocp
 from flax.training.train_state import TrainState
 
+from jax_boids.collector import PolicyConfig, PolicyType, RolloutConfig, collect_rollouts
 from jax_boids.envs.predator_prey import PredatorPreyEnv
 from jax_boids.envs.types import BoidsState, EnvConfig
 from jax_boids.ppo import (
     Transition,
     create_train_state,
-    make_distribution,
     ppo_update,
     select_on_reset,
 )
@@ -64,75 +64,31 @@ def make_train(
     """
     steps_per_update = config.n_steps * config.n_envs
 
-    def _env_step(runner_state: RunnerState, _):
-        """Single environment step for rollout collection."""
-        pred_state, env_states, obs, key, update_step = runner_state
-        key, k1, k2, k3 = jax.random.split(key, 4)
-
-        n_pred = env_config.n_predators
-        n_prey = env_config.n_prey
-
-        # Predator actions from learned policy
-        pred_obs_flat = obs["predator"].reshape(-1, env.observation_size)
-        pred_out = jax.vmap(lambda o: pred_state.apply_fn(pred_state.params, o))(pred_obs_flat)
-        pred_pi = make_distribution(pred_out.action_mean, pred_out.action_logstd)
-        pred_actions_flat = pred_pi.sample(seed=k1)
-        pred_log_probs_flat = pred_pi.log_prob(pred_actions_flat)
-
-        # Prey actions: random Brownian motion
-        prey_actions_flat = jax.random.normal(k2, (config.n_envs * n_prey, env.action_size))
-        prey_actions_flat = prey_actions_flat * config.prey_noise_scale
-
-        # Reshape actions
-        pred_actions = pred_actions_flat.reshape(config.n_envs, n_pred, -1)
-        prey_actions = prey_actions_flat.reshape(config.n_envs, n_prey, -1)
-        pred_log_probs = pred_log_probs_flat.reshape(config.n_envs, n_pred)
-        pred_values = pred_out.value.reshape(config.n_envs, n_pred)
-
-        # Environment step
-        actions = {"predator": pred_actions, "prey": prey_actions}
-        step_keys = jax.random.split(k3, config.n_envs)
-        next_obs, env_states_new, rewards, dones, info = jax.vmap(env.step)(
-            step_keys, env_states, actions
-        )
-
-        # Build transition (predator only)
-        transition_pred = Transition(
-            obs=obs["predator"],
-            action=pred_actions,
-            reward=rewards["predator"],
-            done=dones["predator"],
-            log_prob=pred_log_probs,
-            value=pred_values,
-        )
-
-        # Handle resets
-        reset_mask = dones["__all__"]
-        key, reset_key = jax.random.split(key)
-        reset_keys = jax.random.split(reset_key, config.n_envs)
-        new_obs, new_states = jax.vmap(env.reset)(reset_keys)
-
-        def _select(new, old):
-            return select_on_reset(reset_mask, new, old)
-
-        obs = jax.tree.map(_select, new_obs, next_obs)
-        env_states = jax.tree.map(_select, new_states, env_states_new)
-
-        runner_state = RunnerState(pred_state, env_states, obs, key, update_step)
-        return runner_state, (transition_pred, info)
-
     def _update_step(runner_state: RunnerState, _):
         """Single training update: rollout + PPO update for predators."""
-        runner_state, (transitions_pred, infos) = jax.lax.scan(
-            _env_step, runner_state, None, length=config.n_steps
+        pred_state, env_states, obs, key, update_step = runner_state
+
+        # Configure policies: learned for predators, random for prey
+        policies = {
+            "predator": PolicyConfig(PolicyType.LEARNED, train_state=pred_state, noise_scale=0.0),
+            "prey": PolicyConfig(PolicyType.RANDOM, noise_scale=config.prey_noise_scale),
+        }
+
+        # Configure rollout collection
+        rollout_config = RolloutConfig(n_steps=config.n_steps, n_envs=config.n_envs)
+
+        # Collect rollouts using the abstraction
+        key, (transitions, infos), obs, env_states = collect_rollouts(
+            env, policies, env_config, rollout_config, key, obs, env_states
         )
 
-        key = runner_state.key
+        # Separate key for PPO update
         k1, key = jax.random.split(key)
 
+        # PPO update for predators only
         pred_state, pred_metrics = ppo_update(
-            runner_state.pred_state,
-            transitions_pred,
+            pred_state,
+            transitions["predator"],
             k1,
             config.gamma,
             config.gae_lambda,
@@ -143,32 +99,26 @@ def make_train(
             config.n_minibatches,
         )
 
-        # Metrics
+        # Metrics (keep as JAX arrays for scan compatibility)
         metrics = {
             "policy_loss": pred_metrics["policy_loss"],
             "value_loss": pred_metrics["value_loss"],
             "entropy": pred_metrics["entropy"],
             "approx_kl": pred_metrics["approx_kl"],
-            "reward": transitions_pred.reward.mean(),
+            "reward": transitions["predator"].reward.mean(),
             "prey_alive": infos["prey_alive"].mean(),
         }
 
         # Log metrics
         if log_fn is not None:
-            step = runner_state.update_step * steps_per_update
+            step = update_step * steps_per_update
             jax.debug.callback(log_fn, step, metrics)
 
         # Save checkpoint periodically
         if checkpoint_fn is not None:
-            jax.debug.callback(checkpoint_fn, runner_state.update_step, pred_state.params)
+            jax.debug.callback(checkpoint_fn, update_step, pred_state.params)
 
-        runner_state = RunnerState(
-            pred_state,
-            runner_state.env_states,
-            runner_state.obs,
-            key,
-            runner_state.update_step + 1,
-        )
+        runner_state = RunnerState(pred_state, env_states, obs, key, update_step + 1)
         return runner_state, metrics
 
     def train_fn(key: chex.PRNGKey):
