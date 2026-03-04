@@ -16,10 +16,8 @@ from jax_boids.collector import PolicyConfig, PolicyType, RolloutConfig, collect
 from jax_boids.envs.predator_prey import PredatorPreyEnv
 from jax_boids.envs.types import BoidsState, EnvConfig
 from jax_boids.ppo import (
-    Transition,
     create_train_state,
     ppo_update,
-    select_on_reset,
 )
 
 
@@ -254,10 +252,10 @@ def train(
 
 if __name__ == "__main__":
     train_config = TrainConfig(
-        total_timesteps=5_000_000,
+        total_timesteps=5_000_000,  # 5M steps for convergence
         n_envs=32,
-        n_steps=128,
-        prey_noise_scale=0.3,
+        n_steps=256,
+        prey_noise_scale=0.1,  # Small noise so prey move slightly
     )
     env_config = EnvConfig()
     train(train_config, env_config)

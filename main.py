@@ -57,7 +57,7 @@ def evaluate(checkpoint: str | None = None):
         name = checkpoint_path.name.removesuffix(".zip")
         checkpoint_path = checkpoint_path.parent / name
 
-        # CheckpointCallback naming: checkpoint_500_steps.zip -> checkpoint_vecnormalize_500_steps.pkl
+        # naming: checkpoint_500_steps.zip -> checkpoint_vecnormalize_500_steps.pkl
         # Extract prefix and steps from "checkpoint_500_steps"
         parts = name.rsplit("_", 2)  # ['checkpoint', '500', 'steps']
         if len(parts) == 3:

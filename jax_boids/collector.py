@@ -10,6 +10,7 @@ from typing import Callable, Dict
 import chex
 import jax
 import jax.numpy as jnp
+from flax.training.train_state import TrainState
 
 from jax_boids.envs.predator_prey import PredatorPreyEnv
 from jax_boids.envs.types import EnvConfig
@@ -19,7 +20,6 @@ from jax_boids.ppo import (
     make_distribution,
     select_on_reset,
 )
-from flax.training.train_state import TrainState
 
 
 class PolicyType(Enum):
@@ -91,7 +91,6 @@ def create_policy_fn(
     def random_policy(obs: chex.Array, key: chex.PRNGKey) -> tuple[chex.Array, chex.Array]:
         """Generate random actions with optional noise scaling."""
         n_agents = obs.shape[0]
-        action_size = obs.shape[1] // (obs.shape[1] // 2)
 
         scale = policy_config.noise_scale
         actions = jax.random.uniform(key, (n_agents, 2), minval=-scale, maxval=scale)
@@ -167,7 +166,6 @@ def collect_rollouts(
         key, obs, env_state = carry
 
         agent_keys = jax.random.split(key, len(policies) + 1)
-        keys = list(agent_keys[:-1])
         step_key = agent_keys[-1]
 
         # Get actions and log probs for each agent type

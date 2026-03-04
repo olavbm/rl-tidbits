@@ -3,7 +3,7 @@
 Contains core PPO components used by both multi-agent and single-agent training.
 """
 
-from typing import Dict, NamedTuple
+from typing import Callable, Dict, NamedTuple
 
 import chex
 import distrax
@@ -12,12 +12,7 @@ import jax.numpy as jnp
 import optax
 from flax.training.train_state import TrainState
 
-from jax_boids.networks import ActorCritic
-
-
-from typing import Callable
-
-from jax_boids.networks import NetworkOutput
+from jax_boids.networks import ActorCritic, NetworkOutput
 
 PolicyFunction = Callable[[chex.Array, TrainState], NetworkOutput]
 
@@ -68,7 +63,7 @@ def create_train_state(
     dummy_obs = jnp.zeros((obs_size,))
     params = network.init(key, dummy_obs)
     tx = optax.chain(
-        optax.clip_by_global_norm(0.5),
+        optax.clip_by_global_norm(12.0),
         optax.adam(lr),
     )
     return TrainState.create(apply_fn=network.apply, params=params, tx=tx)

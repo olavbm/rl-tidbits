@@ -537,11 +537,16 @@ def test_reward_distance():
 
 def test_predator_reward_pure_fn():
     """compute_predator_rewards with known inputs."""
-    rewards = compute_predator_rewards(n_captures=jnp.array(3), n_predators=5)
+    dist_to_prey = jnp.array([100.0, 100.0, 100.0, 100.0, 100.0])  # all far
+    rewards = compute_predator_rewards(
+        n_captures=jnp.array(3), n_predators=5, dist_to_prey=dist_to_prey
+    )
     assert rewards.shape == (5,)
     assert jnp.allclose(rewards, 3 * 10.0 / 5, atol=1e-5)
 
-    rewards_zero = compute_predator_rewards(n_captures=jnp.array(0), n_predators=5)
+    rewards_zero = compute_predator_rewards(
+        n_captures=jnp.array(0), n_predators=5, dist_to_prey=dist_to_prey
+    )
     assert jnp.allclose(rewards_zero, 0.0, atol=1e-5)
 
 
@@ -768,7 +773,7 @@ def test_create_policy_fn_random():
 
 def test_create_policy_fn_invalid_type():
     """Create policy function raises error for invalid policy type."""
-    from jax_boids.collector import PolicyConfig, PolicyType, create_policy_fn
+    from jax_boids.collector import PolicyConfig, PolicyType
 
     # Test by checking enum values exist
     assert PolicyType.LEARNED.value == "learned"

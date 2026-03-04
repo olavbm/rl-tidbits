@@ -9,8 +9,6 @@ import jax.numpy as jnp
 from jax_boids.envs.boids import (
     clip_velocity,
     compute_boids_forces,
-    compute_predator_attraction,
-    compute_prey_avoidance,
     wrap_positions,
 )
 from jax_boids.envs.rewards import compute_predator_rewards, compute_prey_rewards
@@ -115,15 +113,11 @@ class PredatorPreyEnv:
             cfg.cohesion_weight,
         )
 
-        # Add chase/evade instincts
-        pred_chase = compute_predator_attraction(
-            state.predator_pos, state.prey_pos, state.prey_alive
-        )
-        prey_flee = compute_prey_avoidance(state.prey_pos, state.predator_pos)
-
-        # Combine forces: instinct + learned action (predators don't flock)
-        pred_accel = pred_chase + pred_actions * cfg.max_acceleration
-        prey_accel = prey_boids + prey_flee * 1.5 + prey_actions * cfg.max_acceleration
+        # Combine forces: learned action only (removing instincts for clean learning)
+        # Predators: only learned steering (no innate chase)
+        # Prey: boids flocking + learned steering (remove flee instinct)
+        pred_accel = pred_actions * cfg.max_acceleration
+        prey_accel = prey_boids + prey_actions * cfg.max_acceleration
 
         # Update velocities
         new_pred_vel = state.predator_vel + pred_accel * cfg.dt
@@ -330,7 +324,16 @@ class PredatorPreyEnv:
         captures: chex.Array,
     ) -> Tuple[chex.Array, chex.Array]:
         """Compute rewards for predators and prey."""
+        cfg = self.config
+
+        # Compute min distance from each predator to any alive prey
+        pred_to_prey_dists = jnp.linalg.norm(
+            prey_pos[None, :, :] - pred_pos[:, None, :], axis=-1
+        )  # [n_pred, n_prey]
+        pred_to_prey_dists = jnp.where(prey_alive[None, :], pred_to_prey_dists, 1e6)
+        pred_min_dist_to_prey = jnp.min(pred_to_prey_dists, axis=1)  # [n_pred]
+
         n_captures = jnp.sum(captures)
-        pred_rewards = compute_predator_rewards(n_captures, self.config.n_predators)
+        pred_rewards = compute_predator_rewards(n_captures, cfg.n_predators, pred_min_dist_to_prey)
         prey_rewards = compute_prey_rewards(prey_pos, pred_pos, prey_alive, captures)
         return pred_rewards, prey_rewards
