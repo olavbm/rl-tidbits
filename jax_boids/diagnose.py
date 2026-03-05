@@ -211,9 +211,15 @@ def run_diagnostics():
     print(
         f"   Value predictions: mean={all_values[:-1].mean():.4f}, std={all_values[:-1].std():.4f}"
     )
+    print(
+        f"   Bootstrap values: mean={bootstrap_values.mean():.4f}, std={bootstrap_values.std():.4f}"
+    )
     print(f"   Actual rewards: mean={rewards_flat.mean():.4f}, std={rewards_flat.std():.4f}")
     print(f"   Target returns: mean={returns_simple.mean():.4f}, std={returns_simple.std():.4f}")
     print(f"   Value error (MSE): {((all_values[:-1] - returns_simple) ** 2).mean():.4f}")
+    print(
+        f"   Scale mismatch: returns_mean / value_mean = {returns_simple.mean() / (all_values[:-1].mean() + 1e-8):.2f}x"
+    )
 
     # Check gradients
     print(f"\n7. Gradient check:")
