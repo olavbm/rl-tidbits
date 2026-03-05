@@ -2,7 +2,6 @@
 
 import jax
 import jax.numpy as jnp
-from flax.training.train_state import TrainState
 
 from jax_boids.envs.predator_prey import PredatorPreyEnv
 from jax_boids.envs.types import EnvConfig
@@ -32,7 +31,7 @@ def run_diagnostics():
     env_keys = jax.random.split(k3, n_envs)
     obs, env_states = jax.vmap(env.reset)(env_keys)
 
-    print(f"\n1. Environment setup:")
+    print("\n1. Environment setup:")
     print(f"   Observation size: {env.observation_size}")
     print(f"   Action size: {env.action_size}")
     print(f"   n_predators: {env_config.n_predators}")
@@ -119,7 +118,7 @@ def run_diagnostics():
     transitions_prey = jax.tree.map(lambda *args: jnp.stack(args), *transitions_prey)
 
     # Check rewards
-    print(f"\n3. Reward statistics:")
+    print("\n3. Reward statistics:")
     print(
         f"   Predator rewards: mean={transitions_pred.reward.mean():.4f}, "
         f"std={transitions_pred.reward.std():.4f}, "
@@ -135,14 +134,14 @@ def run_diagnostics():
     print(f"   Prey alive: mean={info['prey_alive'].mean():.1f}")
 
     # Check entropy (policy randomness)
-    print(f"\n4. Policy entropy (higher = more exploration):")
+    print("\n4. Policy entropy (higher = more exploration):")
     pred_std = jnp.exp(pred_out.action_logstd)
     prey_std = jnp.exp(prey_out.action_logstd)
     print(f"   Predator action std: {pred_std.mean():.4f}")
     print(f"   Prey action std: {prey_std.mean():.4f}")
 
     # Run PPO update
-    print(f"\n5. Running PPO update...")
+    print("\n5. Running PPO update...")
     k1, k2 = jax.random.split(key)
 
     pred_state_new, pred_metrics = ppo_update(
@@ -170,7 +169,7 @@ def run_diagnostics():
         n_minibatches=4,
     )
 
-    print(f"\n6. PPO metrics:")
+    print("\n6. PPO metrics:")
     print(
         f"   Predator - policy_loss: {pred_metrics['policy_loss']:.6f}, "
         f"value_loss: {pred_metrics['value_loss']:.6f}, "
@@ -185,7 +184,7 @@ def run_diagnostics():
     )
 
     # Check GAE and value predictions
-    print(f"\n6. GAE and value analysis:")
+    print("\n6. GAE and value analysis:")
 
     # Compute GAE manually for inspection
     bootstrap_out = jax.vmap(lambda o: pred_state.apply_fn(pred_state.params, o))(
@@ -217,13 +216,13 @@ def run_diagnostics():
     print(f"   Actual rewards: mean={rewards_flat.mean():.4f}, std={rewards_flat.std():.4f}")
     print(f"   Target returns: mean={returns_simple.mean():.4f}, std={returns_simple.std():.4f}")
     print(f"   Value error (MSE): {((all_values[:-1] - returns_simple) ** 2).mean():.4f}")
-    print(
-        f"   Scale mismatch: returns_mean / value_mean = {returns_simple.mean() / (all_values[:-1].mean() + 1e-8):.2f}x"
-    )
+    returns_mean = returns_simple.mean()
+    value_mean = all_values[:-1].mean() + 1e-8
+    print(f"   Scale mismatch: returns_mean / value_mean = {returns_mean / value_mean:.2f}x")
 
     # Check gradients
-    print(f"\n7. Gradient check:")
-    print(f"   (Gradients computed via ppo_update)")
+    print("\n7. Gradient check:")
+    print("   (Gradients computed via ppo_update)")
     print(f"   Policy loss non-zero: {pred_metrics['policy_loss'] != 0}")
     print(f"   Value loss non-zero: {pred_metrics['value_loss'] != 0}")
 

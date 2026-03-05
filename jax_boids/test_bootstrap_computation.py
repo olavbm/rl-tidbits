@@ -86,7 +86,7 @@ def test_bootstrap_computation():
     # V_target = r + gamma * bootstrap * (1 - done)
     expected_last_returns = last_rewards + 0.99 * bootstrap_values * (1 - last_dones)
 
-    print(f"\nLast timestep analysis:")
+    print("\nLast timestep analysis:")
     print(f"  Rewards: mean={last_rewards.mean():.4f}")
     print(f"  Values: mean={last_values.mean():.4f}")
     print(f"  Bootstrap: mean={bootstrap_values.mean():.4f}")

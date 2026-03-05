@@ -1,10 +1,10 @@
 """Quick test to observe value function instability."""
 
 import jax
+
 from jax_boids.envs.predator_prey import PredatorPreyEnv
 from jax_boids.envs.types import EnvConfig
-from jax_boids.train import TrainConfig, RunnerState, make_train
-from jax_boids.ppo import create_train_state
+from jax_boids.train import TrainConfig, make_train
 
 # Small config for quick testing
 config = TrainConfig(

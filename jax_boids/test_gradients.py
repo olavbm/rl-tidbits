@@ -7,7 +7,7 @@ import optax
 from jax_boids.collector import PolicyConfig, PolicyType, RolloutConfig, collect_rollouts
 from jax_boids.envs.predator_prey import PredatorPreyEnv
 from jax_boids.envs.types import EnvConfig
-from jax_boids.ppo import create_train_state, ppo_loss, make_distribution, compute_gae
+from jax_boids.ppo import compute_gae, create_train_state, ppo_loss
 
 
 def test_gradient_norms():
@@ -103,9 +103,9 @@ def test_gradient_norms():
     # The optimizer clips at 0.5
     if grad_norm > 0.5:
         print(f"\n⚠ Gradient norm {grad_norm:.4f} > 0.5, will be clipped!")
-        print(f"  This means updates are smaller than they should be.")
+        print("  This means updates are smaller than they should be.")
     else:
-        print(f"\n✓ Gradient norm is within clipping threshold")
+        print("\n✓ Gradient norm is within clipping threshold")
 
 
 if __name__ == "__main__":

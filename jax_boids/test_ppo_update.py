@@ -7,8 +7,6 @@ from jax_boids.collector import PolicyConfig, PolicyType, RolloutConfig, collect
 from jax_boids.envs.predator_prey import PredatorPreyEnv
 from jax_boids.envs.types import EnvConfig
 from jax_boids.ppo import create_train_state, ppo_update
-from jax_boids.networks import ActorCritic
-from jax_boids.ppo import make_distribution
 
 
 def test_ppo_update_changes_policy():

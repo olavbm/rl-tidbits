@@ -2,7 +2,7 @@
 
 import jax
 import jax.numpy as jnp
-from jax_boids.networks import ActorCritic
+
 from jax_boids.ppo import compute_gae, create_train_state, ppo_loss
 
 key = jax.random.PRNGKey(42)

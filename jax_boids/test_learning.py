@@ -3,7 +3,6 @@
 from dataclasses import replace
 
 import jax
-import jax.numpy as jnp
 
 from jax_boids.collector import PolicyConfig, PolicyType, RolloutConfig, collect_rollouts
 from jax_boids.envs.predator_prey import PredatorPreyEnv
@@ -87,7 +86,8 @@ def test_training_improves_reward():
         n_captures = infos["captures_this_step"].mean()
         rewards.append(float(mean_reward))
         print(
-            f"Update {update:2d}: reward={mean_reward:.4f}, captures={n_captures:.2f}, v_loss={metrics['value_loss']:.2f}"
+            f"Update {update:2d}: reward={mean_reward:.4f}, "
+            f"captures={n_captures:.2f}, v_loss={metrics['value_loss']:.2f}"
         )
 
     # Check trend over time

@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 
 from jax_boids.envs.predator_prey import PredatorPreyEnv
-from jax_boids.envs.types import EnvConfig, BoidsState
+from jax_boids.envs.types import BoidsState, EnvConfig
 
 
 def test_reward_signal_exists():

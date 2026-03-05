@@ -61,7 +61,7 @@ def test_value_head_updates():
     print(f"Value loss: {metrics['value_loss']:.4f}")
 
     # Debug: check returns computation
-    from jax_boids.ppo import compute_gae, Transition
+    from jax_boids.ppo import compute_gae
 
     T = transitions["predator"].obs.shape[0]
     rewards_flat = transitions["predator"].reward.reshape(T, -1)

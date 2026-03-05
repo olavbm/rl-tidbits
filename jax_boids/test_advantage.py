@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from jax_boids.collector import PolicyConfig, PolicyType, RolloutConfig, collect_rollouts
 from jax_boids.envs.predator_prey import PredatorPreyEnv
 from jax_boids.envs.types import EnvConfig
-from jax_boids.ppo import create_train_state, compute_gae
+from jax_boids.ppo import compute_gae, create_train_state
 
 
 def test_advantage_magnitude():
@@ -56,9 +56,9 @@ def test_advantage_magnitude():
         rewards_flat, values_with_bootstrap, dones_flat, gamma=0.99, gae_lambda=0.95
     )
 
-    print(
-        f"\nAdvantage stats: min={advantages.min():.4f}, max={advantages.max():.4f}, mean={advantages.mean():.4f}, std={advantages.std():.4f}"
-    )
+    print("\nAdvantage stats:")
+    print(f"  min={advantages.min():.4f}, max={advantages.max():.4f}")
+    print(f"  mean={advantages.mean():.4f}, std={advantages.std():.4f}")
     print(
         f"Return stats: min={returns.min():.4f}, max={returns.max():.4f}, mean={returns.mean():.4f}"
     )

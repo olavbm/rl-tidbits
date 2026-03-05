@@ -3,16 +3,11 @@
 import jax
 import jax.numpy as jnp
 
-from jax_boids.envs.types import EnvConfig
-from jax_boids.networks import ActorCritic
 from jax_boids.ppo import create_train_state, make_distribution
 
 
 def test_policy_action_magnitude():
     """Policy should output actions with reasonable magnitude, not all zeros."""
-    env_config = EnvConfig(n_predators=2, n_prey=3)
-    network = ActorCritic(action_dim=2)
-
     key = jax.random.PRNGKey(42)
     train_state = create_train_state(key, 50, 2, 3e-4)
 
@@ -46,7 +41,6 @@ def test_policy_action_magnitude():
 
 def test_policy_action_range():
     """Policy actions should span a useful range for the environment."""
-    env_config = EnvConfig(n_predators=2, n_prey=3)
     train_state = create_train_state(jax.random.PRNGKey(0), 50, 2, 3e-4)
 
     # Sample many actions
@@ -55,7 +49,6 @@ def test_policy_action_range():
     obs = jnp.zeros((1000, 50))
 
     out = jax.vmap(lambda o: train_state.apply_fn(train_state.params, o))(obs)
-    pi = make_distribution(out.action_mean, out.action_logstd)
 
     # Sample from distribution
     actions = jax.vmap(lambda o, k: make_distribution(o[0], o[1]).sample(seed=k))(
