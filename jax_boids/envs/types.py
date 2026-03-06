@@ -21,6 +21,17 @@ class BoidsState:
 
 
 @struct.dataclass
+class CurriculumStage:
+    """Configuration for a single curriculum stage."""
+
+    name: str
+    n_prey: int
+    world_size: float
+    prey_speed_mult: float
+    max_steps: int
+
+
+@struct.dataclass
 class EnvConfig:
     """Configuration for the predator-prey environment."""
 
@@ -50,6 +61,16 @@ class EnvConfig:
     # Observation parameters
     k_nearest_same: int = 4  # observe 4 nearest same-team
     k_nearest_enemy: int = 3  # observe 3 nearest enemy
+
+    # Learning mode
+    prey_learn: bool = True  # if False, prey don't learn (passive boids)
+    distance_reward: bool = True  # if False, only capture reward for predators
+    prey_speed_mult: float = 1.0  # multiplier for prey max speed (curriculum)
+
+    # Curriculum
+    curriculum: list[CurriculumStage] | None = None
+    curriculum_timesteps: int = 0
+    current_stage: int = 0
 
 
 class Observation(NamedTuple):

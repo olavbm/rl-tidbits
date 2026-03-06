@@ -10,6 +10,7 @@ import chex
 import jax
 from flax.training.train_state import TrainState
 
+from jax_boids.envs.curriculum import advance_curriculum
 from jax_boids.envs.predator_prey import PredatorPreyEnv
 from jax_boids.envs.types import BoidsState, EnvConfig
 from jax_boids.ppo import (
@@ -47,6 +48,7 @@ class RunnerState(NamedTuple):
     obs: Dict[str, chex.Array]
     key: chex.PRNGKey
     update_step: int
+    env_config: EnvConfig
 
 
 def make_train(config: TrainConfig, env: PredatorPreyEnv, env_config: EnvConfig, log_fn=None):
@@ -58,14 +60,13 @@ def make_train(config: TrainConfig, env: PredatorPreyEnv, env_config: EnvConfig,
         log_fn: Optional callback for logging metrics. Called as log_fn(step, metrics)
     """
     steps_per_update = config.n_steps * config.n_envs
+    n_pred = env_config.n_predators
+    n_prey = env_config.n_prey
 
     def _env_step(runner_state: RunnerState, _):
         """Single environment step for rollout collection."""
-        pred_state, prey_state, env_states, obs, key, update_step = runner_state
+        pred_state, prey_state, env_states, obs, key, update_step, _ = runner_state
         key, k1, k2, k3 = jax.random.split(key, 4)
-
-        n_pred = env_config.n_predators
-        n_prey = env_config.n_prey
 
         # Flatten obs: [n_envs, n_agents, obs_size] -> [n_envs * n_agents, obs_size]
         pred_obs_flat = obs["predator"].reshape(-1, env.observation_size)
@@ -129,7 +130,9 @@ def make_train(config: TrainConfig, env: PredatorPreyEnv, env_config: EnvConfig,
         obs = jax.tree.map(_select, new_obs, next_obs)
         env_states = jax.tree.map(_select, new_states, env_states_new)
 
-        runner_state = RunnerState(pred_state, prey_state, env_states, obs, key, update_step)
+        runner_state = RunnerState(
+            pred_state, prey_state, env_states, obs, key, update_step, runner_state.env_config
+        )
         return runner_state, (transition_pred, transition_prey, info)
 
     def _update_step(runner_state: RunnerState, _):
@@ -174,6 +177,7 @@ def make_train(config: TrainConfig, env: PredatorPreyEnv, env_config: EnvConfig,
         metrics["prey_alive"] = infos["prey_alive"].mean()
         metrics["pred_reward"] = transitions_pred.reward.mean()
         metrics["prey_reward"] = transitions_prey.reward.mean()
+        metrics["curriculum_stage"] = runner_state.env_config.current_stage
 
         # Log metrics using jax.debug.callback (JAX-native logging)
         if log_fn is not None:
@@ -187,6 +191,7 @@ def make_train(config: TrainConfig, env: PredatorPreyEnv, env_config: EnvConfig,
             runner_state.obs,
             key,
             runner_state.update_step + 1,
+            runner_state.env_config,
         )
         return runner_state, metrics
 
@@ -200,7 +205,7 @@ def make_train(config: TrainConfig, env: PredatorPreyEnv, env_config: EnvConfig,
         env_keys = jax.random.split(k3, config.n_envs)
         obs, env_states = jax.vmap(env.reset)(env_keys)
 
-        runner_state = RunnerState(pred_state, prey_state, env_states, obs, key, 0)
+        runner_state = RunnerState(pred_state, prey_state, env_states, obs, key, 0, env_config)
 
         n_updates = config.total_timesteps // (config.n_steps * config.n_envs)
         runner_state, metrics = jax.lax.scan(_update_step, runner_state, None, length=n_updates)
@@ -264,6 +269,7 @@ def train(
             writer.add_scalar("prey/approx_kl", float(metrics["prey_approx_kl"]), step)
             writer.add_scalar("prey/reward", float(metrics["prey_reward"]), step)
             writer.add_scalar("env/prey_alive", float(metrics["prey_alive"]), step)
+            writer.add_scalar("curriculum/stage", float(metrics["curriculum_stage"]), step)
             writer.flush()
             if verbose:
                 print(f"  Step {step:,} - prey_alive: {float(metrics['prey_alive']):.1f}")

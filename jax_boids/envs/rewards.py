@@ -9,28 +9,32 @@ import jax.numpy as jnp
 
 
 def compute_predator_rewards(
-    n_captures: chex.Numeric, n_predators: int, dist_to_prey: chex.Array
+    n_captures: chex.Numeric,
+    n_predators: int,
+    dist_to_prey: chex.Array,
+    use_distance_reward: bool = True,
 ) -> chex.Array:
     """Compute predator rewards from capture count and distance reduction.
-
-    Adds dense reward shaping: reward for moving closer to nearest prey.
 
     Args:
         n_captures: scalar, number of prey captured this step
         n_predators: number of predators
         dist_to_prey: [n_predators] minimum distance to alive prey
+        use_distance_reward: if False, only capture reward (no shaping)
 
     Returns:
         [n_predators] reward array
     """
-    # Capture reward (shared equally)
-    capture_reward = jnp.full(n_predators, n_captures * 10.0 / n_predators)
+    # Capture reward (shared equally, scaled by number of predators)
+    capture_reward = jnp.full(n_predators, n_captures * 50.0 / n_predators)
+
+    if not use_distance_reward:
+        return capture_reward
 
     # Dense shaping: reward for small distances (max reward when touching prey)
-    # Increased from 20 to 50 to cover typical distances in 100x100 world
     distance_reward = jnp.where(
-        dist_to_prey < 50.0,  # Reward distance threshold
-        (50.0 - dist_to_prey) * 0.05,  # Max +2.5 per step
+        dist_to_prey < 50.0,
+        (50.0 - dist_to_prey) * 0.05,
         0.0,
     )
 

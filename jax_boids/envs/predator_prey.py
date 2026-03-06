@@ -113,19 +113,24 @@ class PredatorPreyEnv:
             cfg.cohesion_weight,
         )
 
-        # Combine forces: learned action only (removing instincts for clean learning)
-        # Predators: only learned steering (no innate chase)
-        # Prey: boids flocking + learned steering (remove flee instinct)
+        # Combine forces
+        # Predators: only learned steering
+        # Prey: boids flocking + learned steering (if prey_learn=True)
         pred_accel = pred_actions * cfg.max_acceleration
-        prey_accel = prey_boids + prey_actions * cfg.max_acceleration
+
+        if cfg.prey_learn:
+            prey_accel = prey_boids + prey_actions * cfg.max_acceleration
+        else:
+            prey_accel = prey_boids
 
         # Update velocities
         new_pred_vel = state.predator_vel + pred_accel * cfg.dt
         new_prey_vel = state.prey_vel + prey_accel * cfg.dt
 
-        # Apply speed limits (predators slightly faster)
+        # Apply speed limits (predators slightly faster, prey speed from curriculum)
         new_pred_vel = clip_velocity(new_pred_vel, cfg.max_speed * cfg.predator_speed_bonus)
-        new_prey_vel = clip_velocity(new_prey_vel, cfg.max_speed)
+        prey_max_speed = getattr(cfg, "prey_speed_mult", 1.0) * cfg.max_speed
+        new_prey_vel = clip_velocity(new_prey_vel, prey_max_speed)
 
         # Update positions
         new_pred_pos = state.predator_pos + new_pred_vel * cfg.dt
@@ -334,6 +339,8 @@ class PredatorPreyEnv:
         pred_min_dist_to_prey = jnp.min(pred_to_prey_dists, axis=1)  # [n_pred]
 
         n_captures = jnp.sum(captures)
-        pred_rewards = compute_predator_rewards(n_captures, cfg.n_predators, pred_min_dist_to_prey)
+        pred_rewards = compute_predator_rewards(
+            n_captures, cfg.n_predators, pred_min_dist_to_prey, cfg.distance_reward
+        )
         prey_rewards = compute_prey_rewards(prey_pos, pred_pos, prey_alive, captures)
         return pred_rewards, prey_rewards
