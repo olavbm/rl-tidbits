@@ -463,18 +463,19 @@ def test_obs_values_known_positions():
     )
     obs, _ = env.reset_from_state(state)
 
-    # Predator 0 obs: velocity=[1,0]/max_speed, teammate rel_pos=[10,0]/world_size
+    # Predator 0 obs: velocity=[1,0]/max_speed, teammate rel_pos=[10,0]/half_world
     pred0_obs = obs["predator"][0]
+    half_world = cfg.world_size / 2.0
     # First 2 values: own velocity normalized
     assert jnp.allclose(pred0_obs[0], 1.0 / cfg.max_speed, atol=1e-5)
     assert jnp.allclose(pred0_obs[1], 0.0, atol=1e-5)
     # Next 2 values: nearest same-team relative pos (pred1 at [60,50] - [50,50] = [10,0])
-    assert jnp.allclose(pred0_obs[2], 10.0 / cfg.world_size, atol=1e-5)
-    assert jnp.allclose(pred0_obs[3], 0.0 / cfg.world_size, atol=1e-5)
+    assert jnp.allclose(pred0_obs[2], 10.0 / half_world, atol=1e-5)
+    assert jnp.allclose(pred0_obs[3], 0.0 / half_world, atol=1e-5)
 
 
 def test_reward_capture_value():
-    """Predator gets +10/n_pred per capture, prey gets -10 on capture."""
+    """Predator gets +50/n_pred per capture, prey gets -10 on capture."""
     env = PredatorPreyEnv(SCENARIO_CONFIG)
     n_pred = SCENARIO_CONFIG.n_predators
     # Predator 0 on top of prey 0
@@ -486,10 +487,11 @@ def test_reward_capture_value():
     _, _, rewards, _, info = env.step(key, state, _zero_actions())
     n_captures = int(info["captures_this_step"])
     assert n_captures == 1
-    # Each predator gets 10 * n_captures / n_pred
-    expected_pred = 10.0 * n_captures / n_pred
-    assert jnp.allclose(rewards["predator"][0], expected_pred, atol=1e-5)
-    assert jnp.allclose(rewards["predator"][1], expected_pred, atol=1e-5)
+    # Each predator gets capture_reward + distance_reward
+    # Capture: 50 * n_captures / n_pred = 25
+    # Distance also contributes, so check capture component dominates
+    assert rewards["predator"][0] > 20.0, f"Pred reward too low: {rewards['predator'][0]}"
+    assert rewards["predator"][1] > 20.0, f"Pred reward too low: {rewards['predator'][1]}"
     # Captured prey gets -10 (plus other components, but -10 dominates)
     assert rewards["prey"][0] < -9.0, (
         f"Captured prey reward should be < -9, got {rewards['prey'][0]}"
@@ -542,7 +544,7 @@ def test_predator_reward_pure_fn():
         n_captures=jnp.array(3), n_predators=5, dist_to_prey=dist_to_prey
     )
     assert rewards.shape == (5,)
-    assert jnp.allclose(rewards, 3 * 10.0 / 5, atol=1e-5)
+    assert jnp.allclose(rewards, 3 * 50.0 / 5, atol=1e-5)
 
     rewards_zero = compute_predator_rewards(
         n_captures=jnp.array(0), n_predators=5, dist_to_prey=dist_to_prey
@@ -592,7 +594,7 @@ def test_collect_rollouts_learned_predators_random_prey():
     # Initialize predator policy
     key = jax.random.PRNGKey(42)
     k1, k2, key = jax.random.split(key, 3)
-    pred_state = create_train_state(k1, env.observation_size, env.action_size, 3e-4)
+    pred_state = create_train_state(k1, env.observation_size, env.action_size, 3e-4, 0.5)
 
     # Configure policies
     policies = {
@@ -653,8 +655,8 @@ def test_collect_rollouts_both_learned():
     # Initialize both policies
     key = jax.random.PRNGKey(42)
     k1, k2, key = jax.random.split(key, 3)
-    pred_state = create_train_state(k1, env.observation_size, env.action_size, 3e-4)
-    prey_state = create_train_state(k2, env.observation_size, env.action_size, 3e-4)
+    pred_state = create_train_state(k1, env.observation_size, env.action_size, 3e-4, 0.5)
+    prey_state = create_train_state(k2, env.observation_size, env.action_size, 3e-4, 0.5)
 
     policies = {
         "predator": PolicyConfig(PolicyType.LEARNED, train_state=pred_state, noise_scale=0.0),
@@ -734,7 +736,7 @@ def test_create_policy_fn_learned():
     env = PredatorPreyEnv(env_config)
 
     key = jax.random.PRNGKey(42)
-    train_state = create_train_state(key, env.observation_size, env.action_size, 3e-4)
+    train_state = create_train_state(key, env.observation_size, env.action_size, 3e-4, 0.5)
     policy_fn = create_policy_fn(PolicyConfig(PolicyType.LEARNED, train_state=train_state))
 
     # Test with batched observations

@@ -16,7 +16,7 @@ def test_value_head_updates():
 
     # Create policy
     key = jax.random.PRNGKey(42)
-    train_state = create_train_state(key, env.observation_size, env.action_size, 3e-4)
+    train_state = create_train_state(key, env.observation_size, env.action_size, 3e-4, 0.5)
 
     # Collect rollout
     policies = {
@@ -39,7 +39,7 @@ def test_value_head_updates():
 
     # Run PPO update
     key, k1 = jax.random.split(key)
-    new_train_state, metrics = ppo_update(
+    new_train_state, metrics, _, _ = ppo_update(
         train_state,
         transitions["predator"],
         k1,

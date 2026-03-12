@@ -16,7 +16,7 @@ def test_ppo_update_changes_policy():
 
     # Create initial policy
     key = jax.random.PRNGKey(42)
-    train_state = create_train_state(key, env.observation_size, env.action_size, 3e-4)
+    train_state = create_train_state(key, env.observation_size, env.action_size, 3e-4, 0.5)
 
     # Collect a small rollout
     policies = {
@@ -38,7 +38,7 @@ def test_ppo_update_changes_policy():
 
     # Run PPO update
     key, k1 = jax.random.split(key)
-    new_train_state, metrics = ppo_update(
+    new_train_state, metrics, _, _ = ppo_update(
         train_state,
         transitions["predator"],
         k1,

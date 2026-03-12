@@ -30,7 +30,7 @@ actions = jnp.zeros((n_steps, n_agents, action_size))
 old_log_probs = jnp.zeros((n_steps, n_agents))
 
 # Create train state
-train_state = create_train_state(key, obs_size, action_size, lr=0.001)
+train_state = create_train_state(key, obs_size, action_size, 0.001, 0.5)
 
 # Compute returns
 gamma = 0.99

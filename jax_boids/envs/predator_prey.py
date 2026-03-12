@@ -10,6 +10,7 @@ from jax_boids.envs.boids import (
     clip_velocity,
     compute_boids_forces,
     wrap_positions,
+    wrapped_diff,
 )
 from jax_boids.envs.rewards import compute_predator_rewards, compute_prey_rewards
 from jax_boids.envs.types import BoidsState, EnvConfig, obs_size
@@ -111,6 +112,7 @@ class PredatorPreyEnv:
             cfg.separation_weight,
             cfg.alignment_weight,
             cfg.cohesion_weight,
+            cfg.world_size,
         )
 
         # Combine forces
@@ -199,9 +201,12 @@ class PredatorPreyEnv:
                 state.prey_vel,
                 n_same_team=cfg.n_predators,
                 n_enemies=cfg.n_prey,
+                enemy_alive=state.prey_alive,
             )
         )(jnp.arange(cfg.n_predators))
 
+        # All predators are always alive
+        pred_alive = jnp.ones(cfg.n_predators, dtype=bool)
         prey_obs = jax.vmap(
             lambda i: self._single_agent_obs(
                 i,
@@ -211,6 +216,7 @@ class PredatorPreyEnv:
                 state.predator_vel,
                 n_same_team=cfg.n_prey,
                 n_enemies=cfg.n_predators,
+                enemy_alive=pred_alive,
             )
         )(jnp.arange(cfg.n_prey))
 
@@ -225,22 +231,25 @@ class PredatorPreyEnv:
         enemy_vel: chex.Array,
         n_same_team: int,
         n_enemies: int,
+        enemy_alive: chex.Array | None = None,
     ) -> chex.Array:
         """Compute observation for a single agent."""
         cfg = self.config
+        ws = cfg.world_size
 
         my_pos = own_team_pos[agent_idx]
         my_vel = own_team_vel[agent_idx]
 
-        # Distances to same team
-        same_dists = jnp.linalg.norm(own_team_pos - my_pos, axis=-1)
+        # Distances to same team (wrapped)
+        same_diff = wrapped_diff(own_team_pos, my_pos, ws)
+        same_dists = jnp.linalg.norm(same_diff, axis=-1)
         same_dists = same_dists.at[agent_idx].set(1e6)  # exclude self
 
         # K nearest same team (handle case where team is smaller than k)
         k_same = min(cfg.k_nearest_same, n_same_team - 1)
         _, same_idx = jax.lax.top_k(-same_dists, k_same)
 
-        same_rel_pos_raw = own_team_pos[same_idx] - my_pos
+        same_rel_pos_raw = same_diff[same_idx]
         same_rel_vel_raw = own_team_vel[same_idx] - my_vel
 
         # Pad to fixed size if needed
@@ -249,15 +258,24 @@ class PredatorPreyEnv:
         same_rel_pos = same_rel_pos.at[:k_same].set(same_rel_pos_raw)
         same_rel_vel = same_rel_vel.at[:k_same].set(same_rel_vel_raw)
 
-        # Distances to enemies
-        enemy_dists = jnp.linalg.norm(enemy_pos - my_pos, axis=-1)
+        # Distances to enemies (wrapped, masking dead enemies)
+        enemy_diff = wrapped_diff(enemy_pos, my_pos, ws)
+        enemy_dists = jnp.linalg.norm(enemy_diff, axis=-1)
+        if enemy_alive is not None:
+            enemy_dists = jnp.where(enemy_alive, enemy_dists, 1e6)
 
         # K nearest enemies (handle case where enemies are fewer than k)
         k_enemy = min(cfg.k_nearest_enemy, n_enemies)
         _, enemy_idx = jax.lax.top_k(-enemy_dists, k_enemy)
 
-        enemy_rel_pos_raw = enemy_pos[enemy_idx] - my_pos
+        enemy_rel_pos_raw = enemy_diff[enemy_idx]
         enemy_rel_vel_raw = enemy_vel[enemy_idx] - my_vel
+
+        # Zero out dead enemies' observations
+        if enemy_alive is not None:
+            alive_mask = enemy_alive[enemy_idx]
+            enemy_rel_pos_raw = jnp.where(alive_mask[:, None], enemy_rel_pos_raw, 0.0)
+            enemy_rel_vel_raw = jnp.where(alive_mask[:, None], enemy_rel_vel_raw, 0.0)
 
         # Pad to fixed size if needed
         enemy_rel_pos = jnp.zeros((cfg.k_nearest_enemy, 2))
@@ -265,22 +283,12 @@ class PredatorPreyEnv:
         enemy_rel_pos = enemy_rel_pos.at[:k_enemy].set(enemy_rel_pos_raw)
         enemy_rel_vel = enemy_rel_vel.at[:k_enemy].set(enemy_rel_vel_raw)
 
-        # Boundary distances
-        boundary_dist = jnp.array(
-            [
-                my_pos[1],  # distance to bottom
-                cfg.world_size - my_pos[1],  # distance to top
-                my_pos[0],  # distance to left
-                cfg.world_size - my_pos[0],  # distance to right
-            ]
-        )
-
-        # Normalize observations
-        same_rel_pos = same_rel_pos / cfg.world_size
+        # Normalize observations (half_world for wrapped positions in [-ws/2, ws/2])
+        half_world = ws / 2.0
+        same_rel_pos = same_rel_pos / half_world
         same_rel_vel = same_rel_vel / cfg.max_speed
-        enemy_rel_pos = enemy_rel_pos / cfg.world_size
+        enemy_rel_pos = enemy_rel_pos / half_world
         enemy_rel_vel = enemy_rel_vel / cfg.max_speed
-        boundary_dist = boundary_dist / cfg.world_size
         my_vel_norm = my_vel / cfg.max_speed
 
         return jnp.concatenate(
@@ -290,7 +298,6 @@ class PredatorPreyEnv:
                 same_rel_vel.flatten(),
                 enemy_rel_pos.flatten(),
                 enemy_rel_vel.flatten(),
-                boundary_dist,
             ]
         )
 
@@ -308,10 +315,9 @@ class PredatorPreyEnv:
         """
         cfg = self.config
 
-        # Distance from each prey to each predator
-        dists = jnp.linalg.norm(
-            prey_pos[:, None, :] - pred_pos[None, :, :], axis=-1
-        )  # [n_prey, n_pred]
+        # Wrapped distance from each prey to each predator
+        diff = wrapped_diff(prey_pos[:, None, :], pred_pos[None, :, :], cfg.world_size)
+        dists = jnp.linalg.norm(diff, axis=-1)  # [n_prey, n_pred]
 
         # Prey is captured if any predator is within capture radius
         min_dist = jnp.min(dists, axis=1)  # [n_prey]
@@ -331,10 +337,11 @@ class PredatorPreyEnv:
         """Compute rewards for predators and prey."""
         cfg = self.config
 
-        # Compute min distance from each predator to any alive prey
-        pred_to_prey_dists = jnp.linalg.norm(
-            prey_pos[None, :, :] - pred_pos[:, None, :], axis=-1
-        )  # [n_pred, n_prey]
+        # Compute min wrapped distance from each predator to any alive prey
+        pred_to_prey_diff = wrapped_diff(
+            prey_pos[None, :, :], pred_pos[:, None, :], cfg.world_size
+        )
+        pred_to_prey_dists = jnp.linalg.norm(pred_to_prey_diff, axis=-1)
         pred_to_prey_dists = jnp.where(prey_alive[None, :], pred_to_prey_dists, 1e6)
         pred_min_dist_to_prey = jnp.min(pred_to_prey_dists, axis=1)  # [n_pred]
 
@@ -342,5 +349,7 @@ class PredatorPreyEnv:
         pred_rewards = compute_predator_rewards(
             n_captures, cfg.n_predators, pred_min_dist_to_prey, cfg.distance_reward
         )
-        prey_rewards = compute_prey_rewards(prey_pos, pred_pos, prey_alive, captures)
+        prey_rewards = compute_prey_rewards(
+            prey_pos, pred_pos, prey_alive, captures, cfg.world_size
+        )
         return pred_rewards, prey_rewards

@@ -19,7 +19,7 @@ def test_bootstrap_computation():
     # Initialize policy
     key = jax.random.PRNGKey(42)
     k1, key = jax.random.split(key, 2)
-    train_state = create_train_state(k1, env.observation_size, env.action_size, 3e-4)
+    train_state = create_train_state(k1, env.observation_size, env.action_size, 3e-4, 0.5)
 
     policies = {
         "predator": PolicyConfig(PolicyType.LEARNED, train_state=train_state, noise_scale=0.0),

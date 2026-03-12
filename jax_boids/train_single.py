@@ -37,6 +37,10 @@ class TrainConfig(NamedTuple):
     total_timesteps: int = 1_000_000
     n_envs: int = 32
     prey_noise_scale: float = 0.3  # scale of random prey actions
+    orthogonal_init: bool = True  # Enable by default (improves training)
+    lr_anneal: bool = True  # Enable by default (improves training)
+    min_lr: float = 0.0  # minimum LR for annealing (0.0 = 0x of initial LR)
+    normalize_returns: bool = True  # Enable by default (improves training)
 
 
 class RunnerState(NamedTuple):
@@ -84,7 +88,7 @@ def make_train(
         k1, key = jax.random.split(key)
 
         # PPO update for predators only
-        pred_state, pred_metrics = ppo_update(
+        pred_state, pred_metrics, pred_adv_mean, pred_adv_std = ppo_update(
             pred_state,
             transitions["predator"],
             k1,
@@ -95,6 +99,7 @@ def make_train(
             config.ent_coef,
             config.n_epochs,
             config.n_minibatches,
+            normalize_returns=config.normalize_returns,
         )
 
         # Metrics (keep as JAX arrays for scan compatibility)
@@ -105,6 +110,8 @@ def make_train(
             "approx_kl": pred_metrics["approx_kl"],
             "reward": transitions["predator"].reward.mean(),
             "prey_alive": infos["prey_alive"].mean(),
+            "advantages_mean": pred_adv_mean,
+            "advantages_std": pred_adv_std,
         }
 
         # Log metrics
@@ -123,14 +130,22 @@ def make_train(
         """Full training loop."""
         k1, k2, key = jax.random.split(key, 3)
 
-        pred_state = create_train_state(k1, env.observation_size, env.action_size, config.lr)
+        n_updates = config.total_timesteps // (config.n_steps * config.n_envs)
+        pred_state = create_train_state(
+            k1,
+            env.observation_size,
+            env.action_size,
+            config.lr,
+            config.max_grad_norm,
+            total_updates=n_updates if config.lr_anneal else None,
+            orthogonal_init=config.orthogonal_init,
+            min_lr=config.min_lr,
+        )
 
         env_keys = jax.random.split(k2, config.n_envs)
         obs, env_states = jax.vmap(env.reset)(env_keys)
 
         runner_state = RunnerState(pred_state, env_states, obs, key, 0)
-
-        n_updates = config.total_timesteps // (config.n_steps * config.n_envs)
         runner_state, metrics = jax.lax.scan(_update_step, runner_state, None, length=n_updates)
 
         return runner_state, metrics

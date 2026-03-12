@@ -24,8 +24,8 @@ def run_diagnostics():
     k1, k2, k3, key = jax.random.split(key, 4)
 
     # Create train states
-    pred_state = create_train_state(k1, env.observation_size, env.action_size, 3e-4)
-    prey_state = create_train_state(k2, env.observation_size, env.action_size, 3e-4)
+    pred_state = create_train_state(k1, env.observation_size, env.action_size, 3e-4, 0.5)
+    prey_state = create_train_state(k2, env.observation_size, env.action_size, 3e-4, 0.5)
 
     # Reset environments
     env_keys = jax.random.split(k3, n_envs)
@@ -144,7 +144,7 @@ def run_diagnostics():
     print("\n5. Running PPO update...")
     k1, k2 = jax.random.split(key)
 
-    pred_state_new, pred_metrics = ppo_update(
+    pred_state_new, pred_metrics, pred_adv_mean, pred_adv_std = ppo_update(
         pred_state,
         transitions_pred,
         k1,
@@ -156,7 +156,7 @@ def run_diagnostics():
         n_epochs=4,
         n_minibatches=4,
     )
-    prey_state_new, prey_metrics = ppo_update(
+    prey_state_new, prey_metrics, prey_adv_mean, prey_adv_std = ppo_update(
         prey_state,
         transitions_prey,
         k2,

@@ -27,8 +27,9 @@ class CurriculumStage:
     name: str
     n_prey: int
     world_size: float
-    prey_speed_mult: float
-    max_steps: int
+    prey_speed_mult: float = 1.0
+    max_steps: int = 500
+    predator_speed_mult: float = 1.0
 
 
 @struct.dataclass
@@ -81,7 +82,6 @@ class Observation(NamedTuple):
     same_team_rel_vel: chex.Array  # [k_same, 2] relative velocities
     enemy_rel_pos: chex.Array  # [k_enemy, 2] relative positions
     enemy_rel_vel: chex.Array  # [k_enemy, 2] relative velocities
-    boundary_dist: chex.Array  # [4] distance to boundaries (up, down, left, right)
 
 
 def obs_size(config: EnvConfig) -> int:
@@ -92,7 +92,6 @@ def obs_size(config: EnvConfig) -> int:
         + config.k_nearest_same * 2  # same team relative velocities
         + config.k_nearest_enemy * 2  # enemy relative positions
         + config.k_nearest_enemy * 2  # enemy relative velocities
-        + 4  # boundary distances
     )
 
 
@@ -105,6 +104,5 @@ def flatten_obs(obs: Observation) -> chex.Array:
             obs.same_team_rel_vel.flatten(),
             obs.enemy_rel_pos.flatten(),
             obs.enemy_rel_vel.flatten(),
-            obs.boundary_dist,
         ]
     )

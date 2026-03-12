@@ -19,16 +19,26 @@ class ActorCritic(nn.Module):
 
     action_dim: int
     hidden_dims: Sequence[int] = (64, 64)
+    orthogonal_init: bool = False
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> NetworkOutput:
+        if self.orthogonal_init:
+            hidden_init = nn.initializers.orthogonal(jnp.sqrt(2))
+            policy_init = nn.initializers.orthogonal(0.01)
+            value_init = nn.initializers.orthogonal(1.0)
+        else:
+            hidden_init = nn.initializers.lecun_normal()
+            policy_init = nn.initializers.lecun_normal()
+            value_init = nn.initializers.lecun_normal()
+
         # Shared layers
         for dim in self.hidden_dims:
-            x = nn.Dense(dim)(x)
+            x = nn.Dense(dim, kernel_init=hidden_init)(x)
             x = nn.tanh(x)
 
         # Actor head
-        action_mean = nn.Dense(self.action_dim)(x)
+        action_mean = nn.Dense(self.action_dim, kernel_init=policy_init)(x)
         action_logstd = self.param(
             "action_logstd",
             nn.initializers.zeros,
@@ -36,7 +46,7 @@ class ActorCritic(nn.Module):
         )
 
         # Critic head
-        value = nn.Dense(1)(x)
+        value = nn.Dense(1, kernel_init=value_init)(x)
         value = jnp.squeeze(value, axis=-1)
 
         return NetworkOutput(action_mean, action_logstd, value)

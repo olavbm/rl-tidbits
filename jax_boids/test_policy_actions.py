@@ -9,7 +9,7 @@ from jax_boids.ppo import create_train_state, make_distribution
 def test_policy_action_magnitude():
     """Policy should output actions with reasonable magnitude, not all zeros."""
     key = jax.random.PRNGKey(42)
-    train_state = create_train_state(key, 50, 2, 3e-4)
+    train_state = create_train_state(key, 50, 2, 3e-4, 0.5)
 
     # Test with various observation magnitudes
     key, k1 = jax.random.split(key)
@@ -41,7 +41,7 @@ def test_policy_action_magnitude():
 
 def test_policy_action_range():
     """Policy actions should span a useful range for the environment."""
-    train_state = create_train_state(jax.random.PRNGKey(0), 50, 2, 3e-4)
+    train_state = create_train_state(jax.random.PRNGKey(0), 50, 2, 3e-4, 0.5)
 
     # Sample many actions
     key = jax.random.PRNGKey(42)

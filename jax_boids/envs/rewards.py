@@ -7,6 +7,8 @@ so reward shaping can evolve independently.
 import chex
 import jax.numpy as jnp
 
+from jax_boids.envs.boids import wrapped_diff
+
 
 def compute_predator_rewards(
     n_captures: chex.Numeric,
@@ -46,6 +48,7 @@ def compute_prey_rewards(
     pred_pos: chex.Array,
     prey_alive: chex.Array,
     captures: chex.Array,
+    world_size: float = 0.0,
 ) -> chex.Array:
     """Compute prey rewards from survival, capture penalty, and distance.
 
@@ -54,6 +57,7 @@ def compute_prey_rewards(
         pred_pos: [n_pred, 2] predator positions
         prey_alive: [n_prey] bool mask (after captures applied)
         captures: [n_prey] bool mask of newly captured this step
+        world_size: if > 0, use toroidal wrapping
 
     Returns:
         [n_prey] reward array
@@ -64,10 +68,12 @@ def compute_prey_rewards(
     # Penalty for being caught
     caught_penalty = jnp.where(captures, -10.0, 0.0)
 
-    # Reward for distance from predators
-    prey_to_pred_dist = jnp.linalg.norm(
-        prey_pos[:, None, :] - pred_pos[None, :, :], axis=-1
-    )  # [n_prey, n_pred]
+    # Reward for distance from predators (wrapped)
+    if world_size > 0:
+        diff = wrapped_diff(prey_pos[:, None, :], pred_pos[None, :, :], world_size)
+    else:
+        diff = prey_pos[:, None, :] - pred_pos[None, :, :]
+    prey_to_pred_dist = jnp.linalg.norm(diff, axis=-1)  # [n_prey, n_pred]
     min_dist_to_pred = jnp.min(prey_to_pred_dist, axis=1)  # [n_prey]
     distance_reward = jnp.where(prey_alive, 0.01 * min_dist_to_pred, 0.0)
 

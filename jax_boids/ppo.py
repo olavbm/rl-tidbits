@@ -57,14 +57,30 @@ def create_train_state(
     obs_size: int,
     action_size: int,
     lr: float,
+    max_grad_norm: float = 0.5,
+    total_updates: int | None = None,
+    orthogonal_init: bool = False,
+    min_lr: float = 0.0,
 ) -> TrainState:
-    """Initialize network and optimizer."""
-    network = ActorCritic(action_dim=action_size)
+    """Initialize network and optimizer.
+
+    Args:
+        total_updates: If set, linearly anneal LR over this many updates.
+        orthogonal_init: Use orthogonal weight initialization.
+        min_lr: Minimum learning rate for annealing (default 0.0).
+    """
+    network = ActorCritic(action_dim=action_size, orthogonal_init=orthogonal_init)
     dummy_obs = jnp.zeros((obs_size,))
     params = network.init(key, dummy_obs)
+
+    if total_updates is not None:
+        lr_schedule = optax.linear_schedule(lr, min_lr, total_updates)
+    else:
+        lr_schedule = lr
+
     tx = optax.chain(
-        optax.clip_by_global_norm(12.0),
-        optax.adam(lr),
+        optax.clip_by_global_norm(max_grad_norm),
+        optax.adam(lr_schedule, eps=1e-5),
     )
     return TrainState.create(apply_fn=network.apply, params=params, tx=tx)
 
@@ -145,9 +161,33 @@ def ppo_loss(
         "value_loss": value_loss,
         "entropy": entropy,
         "approx_kl": ((ratio - 1) - jnp.log(ratio)).mean(),
+        "ratio_mean": ratio.mean(),
+        "ratio_std": ratio.std(),
     }
 
     return total_loss, metrics
+
+
+def log_advantage_stats(
+    metrics: Dict,
+    agent_name: str,
+    advantages_mean: chex.Array,
+    advantages_std: chex.Array,
+) -> Dict:
+    """Add advantage statistics to metrics dict for logging.
+
+    Args:
+        metrics: Existing metrics dict
+        agent_name: Agent prefix (e.g., "pred" or "prey")
+        advantages_mean: Mean of raw advantages before normalization
+        advantages_std: Std of raw advantages before normalization
+
+    Returns:
+        Updated metrics dict with advantage stats
+    """
+    metrics[f"{agent_name}/advantages_mean"] = advantages_mean
+    metrics[f"{agent_name}/advantages_std"] = advantages_std
+    return metrics
 
 
 def ppo_update(
@@ -161,7 +201,8 @@ def ppo_update(
     ent_coef: float,
     n_epochs: int,
     n_minibatches: int,
-) -> tuple[TrainState, Dict]:
+    normalize_returns: bool = False,
+) -> tuple[TrainState, Dict, chex.Array, chex.Array]:
     """PPO update for a batch of transitions.
 
     Args:
@@ -177,7 +218,7 @@ def ppo_update(
         n_minibatches: Number of minibatches
 
     Returns:
-        Updated train_state and metrics dict
+        Updated train_state, metrics dict, advantages_mean, advantages_std
     """
     # transitions shapes: [T, n_envs, n_agents, ...]
     T = transitions.obs.shape[0]
@@ -201,15 +242,22 @@ def ppo_update(
         gae_lambda,
     )
 
+    # Normalize returns (reward normalization via return std)
+    if normalize_returns:
+        returns_std = returns.std() + 1e-8
+        returns = returns / returns_std
+
     # Flatten time dimension
     obs = obs_flat.reshape(-1, obs_flat.shape[-1])
     actions = actions_flat.reshape(-1, actions_flat.shape[-1])
     old_log_probs = log_probs_flat.flatten()
-    advantages = advantages.flatten()
+    advantages_flat = advantages.flatten()
     returns = returns.flatten()
 
     # Normalize advantages
-    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+    advantages_mean = advantages_flat.mean()
+    advantages_std = advantages_flat.std()
+    advantages = (advantages_flat - advantages_mean) / (advantages_std + 1e-8)
 
     batch_size = obs.shape[0]
     minibatch_size = batch_size // n_minibatches
@@ -261,7 +309,7 @@ def ppo_update(
     keys = jax.random.split(key, n_epochs)
     train_state, metrics = jax.lax.scan(_epoch_step, train_state, keys)
     metrics = jax.tree.map(lambda x: x.mean(), metrics)
-    return train_state, metrics
+    return train_state, metrics, advantages_mean, advantages_std
 
 
 def select_on_reset(reset_mask: chex.Array, new: chex.Array, old: chex.Array) -> chex.Array:

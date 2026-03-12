@@ -4,16 +4,39 @@ import chex
 import jax.numpy as jnp
 
 
-def compute_distances(pos: chex.Array) -> chex.Array:
+def wrapped_diff(a: chex.Array, b: chex.Array, world_size: float) -> chex.Array:
+    """Compute shortest displacement from b to a in toroidal world.
+
+    Returns the vector pointing from b toward a via the shortest path,
+    accounting for wrapping. Result is in [-world_size/2, world_size/2].
+
+    Args:
+        a: target positions (..., 2)
+        b: source positions (..., 2)
+        world_size: size of the toroidal world
+
+    Returns:
+        displacement vectors (..., 2) from b to a
+    """
+    delta = a - b
+    half = world_size / 2.0
+    return (delta + half) % world_size - half
+
+
+def compute_distances(pos: chex.Array, world_size: float = 0.0) -> chex.Array:
     """Compute pairwise distances between all agents.
 
     Args:
         pos: [n_agents, 2] positions
+        world_size: if > 0, use toroidal wrapping
 
     Returns:
         [n_agents, n_agents] distance matrix
     """
-    diff = pos[:, None, :] - pos[None, :, :]  # [n, n, 2]
+    if world_size > 0:
+        diff = wrapped_diff(pos[:, None, :], pos[None, :, :], world_size)
+    else:
+        diff = pos[:, None, :] - pos[None, :, :]  # [n, n, 2]
     return jnp.linalg.norm(diff, axis=-1)  # [n, n]
 
 
@@ -21,6 +44,7 @@ def compute_separation(
     pos: chex.Array,
     dists: chex.Array,
     perception_radius: float,
+    world_size: float = 0.0,
 ) -> chex.Array:
     """Compute separation force: steer away from close neighbors.
 
@@ -28,11 +52,15 @@ def compute_separation(
         pos: [n_agents, 2] positions
         dists: [n_agents, n_agents] precomputed distances
         perception_radius: distance within which to consider neighbors
+        world_size: if > 0, use toroidal wrapping
 
     Returns:
         [n_agents, 2] separation forces
     """
-    diff = pos[:, None, :] - pos[None, :, :]  # from other to self
+    if world_size > 0:
+        diff = wrapped_diff(pos[:, None, :], pos[None, :, :], world_size)
+    else:
+        diff = pos[:, None, :] - pos[None, :, :]  # from other to self
 
     # Neighbors within perception radius (excluding self)
     neighbors = (dists < perception_radius) & (dists > 1e-6)
@@ -78,6 +106,7 @@ def compute_cohesion(
     pos: chex.Array,
     dists: chex.Array,
     perception_radius: float,
+    world_size: float = 0.0,
 ) -> chex.Array:
     """Compute cohesion force: steer toward center of neighbors.
 
@@ -85,6 +114,7 @@ def compute_cohesion(
         pos: [n_agents, 2] positions
         dists: [n_agents, n_agents] precomputed distances
         perception_radius: distance within which to consider neighbors
+        world_size: if > 0, use toroidal wrapping
 
     Returns:
         [n_agents, 2] cohesion forces
@@ -92,11 +122,14 @@ def compute_cohesion(
     neighbors = (dists < perception_radius) & (dists > 1e-6)
     n_neighbors = jnp.sum(neighbors, axis=1, keepdims=True) + 1e-6
 
-    # Center of mass of neighbors
-    center = jnp.sum(pos[None, :, :] * neighbors[:, :, None], axis=1) / n_neighbors
-
-    # Direction toward center
-    direction = center - pos
+    if world_size > 0:
+        # Use mean of wrapped relative positions instead of absolute center
+        rel = wrapped_diff(pos[None, :, :], pos[:, None, :], world_size)
+        avg_rel = jnp.sum(rel * neighbors[:, :, None], axis=1) / n_neighbors
+        direction = avg_rel
+    else:
+        center = jnp.sum(pos[None, :, :] * neighbors[:, :, None], axis=1) / n_neighbors
+        direction = center - pos
 
     # Normalize
     norm = jnp.linalg.norm(direction, axis=-1, keepdims=True) + 1e-6
@@ -110,6 +143,7 @@ def compute_boids_forces(
     separation_weight: float,
     alignment_weight: float,
     cohesion_weight: float,
+    world_size: float = 0.0,
 ) -> chex.Array:
     """Compute combined boids steering forces.
 
@@ -120,15 +154,16 @@ def compute_boids_forces(
         separation_weight: weight for separation force
         alignment_weight: weight for alignment force
         cohesion_weight: weight for cohesion force
+        world_size: if > 0, use toroidal wrapping
 
     Returns:
         [n_agents, 2] combined steering forces
     """
-    dists = compute_distances(pos)
+    dists = compute_distances(pos, world_size)
 
-    sep = compute_separation(pos, dists, perception_radius)
+    sep = compute_separation(pos, dists, perception_radius, world_size)
     ali = compute_alignment(vel, dists, perception_radius)
-    coh = compute_cohesion(pos, dists, perception_radius)
+    coh = compute_cohesion(pos, dists, perception_radius, world_size)
 
     return separation_weight * sep + alignment_weight * ali + cohesion_weight * coh
 
@@ -137,6 +172,7 @@ def compute_predator_attraction(
     predator_pos: chex.Array,
     prey_pos: chex.Array,
     prey_alive: chex.Array,
+    world_size: float = 0.0,
 ) -> chex.Array:
     """Compute attraction force toward nearest prey for each predator.
 
@@ -144,12 +180,16 @@ def compute_predator_attraction(
         predator_pos: [n_pred, 2] predator positions
         prey_pos: [n_prey, 2] prey positions
         prey_alive: [n_prey] bool mask
+        world_size: if > 0, use toroidal wrapping
 
     Returns:
         [n_pred, 2] attraction forces toward nearest alive prey
     """
     # Distance from each predator to each prey
-    diff = prey_pos[None, :, :] - predator_pos[:, None, :]  # [n_pred, n_prey, 2]
+    if world_size > 0:
+        diff = wrapped_diff(prey_pos[None, :, :], predator_pos[:, None, :], world_size)
+    else:
+        diff = prey_pos[None, :, :] - predator_pos[:, None, :]  # [n_pred, n_prey, 2]
     dists = jnp.linalg.norm(diff, axis=-1)  # [n_pred, n_prey]
 
     # Mask out dead prey with large distance
@@ -170,6 +210,7 @@ def compute_prey_avoidance(
     prey_pos: chex.Array,
     predator_pos: chex.Array,
     avoidance_radius: float = 20.0,
+    world_size: float = 0.0,
 ) -> chex.Array:
     """Compute avoidance force away from predators for each prey.
 
@@ -177,12 +218,16 @@ def compute_prey_avoidance(
         prey_pos: [n_prey, 2] prey positions
         predator_pos: [n_pred, 2] predator positions
         avoidance_radius: distance within which to flee
+        world_size: if > 0, use toroidal wrapping
 
     Returns:
         [n_prey, 2] avoidance forces
     """
     # Direction from predators to prey
-    diff = prey_pos[:, None, :] - predator_pos[None, :, :]  # [n_prey, n_pred, 2]
+    if world_size > 0:
+        diff = wrapped_diff(prey_pos[:, None, :], predator_pos[None, :, :], world_size)
+    else:
+        diff = prey_pos[:, None, :] - predator_pos[None, :, :]  # [n_prey, n_pred, 2]
     dists = jnp.linalg.norm(diff, axis=-1)  # [n_prey, n_pred]
 
     # Weight by inverse distance (closer predators = more urgent)

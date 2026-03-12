@@ -16,7 +16,7 @@ def test_advantage_magnitude():
 
     # Create policy
     key = jax.random.PRNGKey(42)
-    train_state = create_train_state(key, env.observation_size, env.action_size, 3e-4)
+    train_state = create_train_state(key, env.observation_size, env.action_size, 3e-4, 0.5)
 
     # Collect rollout
     policies = {

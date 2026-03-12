@@ -46,7 +46,7 @@ def test_training_improves_reward():
 
     key = jax.random.PRNGKey(42)
     k1, key = jax.random.split(key)
-    train_state = create_train_state(k1, env.observation_size, env.action_size, lr)
+    train_state = create_train_state(k1, env.observation_size, env.action_size, lr, 0.5)
 
     policies = {
         "predator": PolicyConfig(PolicyType.LEARNED, train_state=train_state),
@@ -65,7 +65,7 @@ def test_training_improves_reward():
         )
 
         key, k1 = jax.random.split(key)
-        train_state, metrics = ppo_update(
+        train_state, metrics, _, _ = ppo_update(
             train_state,
             transitions["predator"],
             k1,

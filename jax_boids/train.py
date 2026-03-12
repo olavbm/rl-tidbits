@@ -146,7 +146,7 @@ def make_train(config: TrainConfig, env: PredatorPreyEnv, env_config: EnvConfig,
         key = runner_state.key
         k1, k2, key = jax.random.split(key, 3)
 
-        pred_state, pred_metrics = ppo_update(
+        pred_state, pred_metrics, pred_adv_mean, pred_adv_std = ppo_update(
             runner_state.pred_state,
             transitions_pred,
             k1,
@@ -158,7 +158,7 @@ def make_train(config: TrainConfig, env: PredatorPreyEnv, env_config: EnvConfig,
             config.n_epochs,
             config.n_minibatches,
         )
-        prey_state, prey_metrics = ppo_update(
+        prey_state, prey_metrics, prey_adv_mean, prey_adv_std = ppo_update(
             runner_state.prey_state,
             transitions_prey,
             k2,
@@ -174,6 +174,10 @@ def make_train(config: TrainConfig, env: PredatorPreyEnv, env_config: EnvConfig,
         # Combine metrics
         metrics = {"pred_" + k: v for k, v in pred_metrics.items()}
         metrics.update({"prey_" + k: v for k, v in prey_metrics.items()})
+        metrics["pred_advantages_mean"] = pred_adv_mean
+        metrics["pred_advantages_std"] = pred_adv_std
+        metrics["prey_advantages_mean"] = prey_adv_mean
+        metrics["prey_advantages_std"] = prey_adv_std
         metrics["prey_alive"] = infos["prey_alive"].mean()
         metrics["pred_reward"] = transitions_pred.reward.mean()
         metrics["prey_reward"] = transitions_prey.reward.mean()
@@ -199,8 +203,12 @@ def make_train(config: TrainConfig, env: PredatorPreyEnv, env_config: EnvConfig,
         """Full training loop - JIT compiled with logging via debug.callback."""
         k1, k2, k3, key = jax.random.split(key, 4)
 
-        pred_state = create_train_state(k1, env.observation_size, env.action_size, config.lr)
-        prey_state = create_train_state(k2, env.observation_size, env.action_size, config.lr)
+        pred_state = create_train_state(
+            k1, env.observation_size, env.action_size, config.lr, config.max_grad_norm
+        )
+        prey_state = create_train_state(
+            k2, env.observation_size, env.action_size, config.lr, config.max_grad_norm
+        )
 
         env_keys = jax.random.split(k3, config.n_envs)
         obs, env_states = jax.vmap(env.reset)(env_keys)
@@ -263,11 +271,15 @@ def train(
             writer.add_scalar("pred/entropy", float(metrics["pred_entropy"]), step)
             writer.add_scalar("pred/approx_kl", float(metrics["pred_approx_kl"]), step)
             writer.add_scalar("pred/reward", float(metrics["pred_reward"]), step)
+            writer.add_scalar("pred/advantages_mean", float(metrics["pred_advantages_mean"]), step)
+            writer.add_scalar("pred/advantages_std", float(metrics["pred_advantages_std"]), step)
             writer.add_scalar("prey/policy_loss", float(metrics["prey_policy_loss"]), step)
             writer.add_scalar("prey/value_loss", float(metrics["prey_value_loss"]), step)
             writer.add_scalar("prey/entropy", float(metrics["prey_entropy"]), step)
             writer.add_scalar("prey/approx_kl", float(metrics["prey_approx_kl"]), step)
             writer.add_scalar("prey/reward", float(metrics["prey_reward"]), step)
+            writer.add_scalar("prey/advantages_mean", float(metrics["prey_advantages_mean"]), step)
+            writer.add_scalar("prey/advantages_std", float(metrics["prey_advantages_std"]), step)
             writer.add_scalar("env/prey_alive", float(metrics["prey_alive"]), step)
             writer.add_scalar("curriculum/stage", float(metrics["curriculum_stage"]), step)
             writer.flush()
