@@ -65,7 +65,7 @@ ssh "$REMOTE" "pkill -9 -f 'python $SCRIPT' 2>/dev/null || true"
 sleep 1
 
 echo "Starting '$SCRIPT $ARGS' on $REMOTE in background..."
-ssh "$REMOTE" "bash -c 'cd $REMOTE_DIR && nohup env PYTHONPATH=. uv run python $SCRIPT $ARGS > $LOG_FILE 2>&1 & disown'"
+ssh "$REMOTE" "bash -c 'cd $REMOTE_DIR && (nohup env PYTHONPATH=. uv run python $SCRIPT $ARGS > $LOG_FILE 2>&1) & disown'"
 
 echo ""
 echo "Training started. Check progress with:"
