@@ -47,9 +47,10 @@ Improve PPO training efficiency for predator-prey environment. Target: reduce pr
 ### Key Files
 
 - `jax_boids/configs.py` - Named config database (validated_005, validated_043)
-- `jax_boids/validate_configs.py` - Extended validation script (2M steps)
+- `jax_boids/train.py` - Unified training entrypoint (all modes)
 - `jax_boids/ppo.py` - Core PPO implementation
-- `jax_boids/train_single.py` - Single-agent training (predators learn)
+- `jax_boids/train_single.py` - Single-agent training logic (predators learn)
+- `jax_boids/train_ippo.py` - Multi-agent IPPO training (both sides learn)
 - `jax_boids/analyze_sweep.py` - Sweep results analysis
 - `jax_boids/telemetry/diagnostics.py` - Training diagnostics
 
@@ -57,33 +58,34 @@ Improve PPO training efficiency for predator-prey environment. Target: reduce pr
 
 All training runs should be executed on the remote machine (hoppetusse) via `deploy.sh`:
 
-### Running Sweeps
+### Unified Training Script
+
+The unified `jax_boids/train.py` supports all training modes:
 
 ```bash
-# Broad random sweep
-./deploy.sh jax_boids/run_random_sweep.py --n-configs 100
+# Random sweep (100 configs, 200k steps each)
+./deploy.sh jax_boids/train.py --mode sweep --n-configs 100 --total-timesteps 200000
 
-# Fine-tuning sweep (tight bounds around best config)
-./deploy.sh jax_boids/run_fine_tuning_sweep.py --n-configs 100
+# Fine-tuning sweep around validated config
+./deploy.sh jax_boids/train.py --mode sweep-fine --base-config validated_005 --n-configs 50
+
+# Train a named config
+./deploy.sh jax_boids/train.py --mode train --config validated_005 --total-timesteps 1000000
+
+# Validate configs with multiple seeds
+./deploy.sh jax_boids/train.py --mode validate --config validated_005 validated_043 --n-seeds 5
+
+# Validate top N from sweep results
+./deploy.sh jax_boids/train.py --mode validate --from-results runs/sweep/results.json --top 10 --n-seeds 3
 
 # Check progress
-ssh hoppetusse "tail -f dev/python/rl-tidbits/run_fine_tuning_sweep_output.log"
+ssh hoppetusse "tail -f dev/python/rl-tidbits/train_output.log"
 
 # Fetch results when done
-./deploy.sh --fetch runs/fine_tuning_sweep
+./deploy.sh --fetch runs/sweep
 
 # Analyze results
-./deploy.sh --analyze runs/fine_tuning_sweep/results.json --top 10
-```
-
-### Running Single Training
-
-```bash
-# Deploy training script
-./deploy.sh jax_boids/train_single.py
-
-# Check progress
-ssh hoppetusse "tail -f dev/python/rl-tidbits/train_single_output.log"
+./deploy.sh --analyze runs/sweep/results.json --top 10
 ```
 
 The deploy script:
@@ -96,7 +98,7 @@ The deploy script:
 
 ```bash
 # Analyze sweep results (JSON file or directory with results.json)
-./deploy.sh --analyze runs/expanded_random_sweep/results.json --top 10
+./deploy.sh --analyze runs/sweep/results.json --top 10
 
 # Compare multiple training runs
 uv run python -m jax_boids.telemetry.diagnostics runs/<sweep_dir> --compare --agent pred

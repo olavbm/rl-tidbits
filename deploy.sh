@@ -10,10 +10,11 @@ usage() {
     echo "       $0 --analyze <results_file>  # Analyze local results"
     echo ""
     echo "Examples:"
-    echo "  $0 jax_boids/run_random_sweep.py --n-configs 100"
-    echo "  $0 jax_boids/train_single.py"
-    echo "  $0 --fetch runs/expanded_random_sweep"
-    echo "  $0 --analyze runs/expanded_random_sweep/results.json"
+    echo "  $0 jax_boids/train.py --mode sweep --n-configs 100"
+    echo "  $0 jax_boids/train.py --mode train --config validated_005"
+    echo "  $0 jax_boids/train.py --mode validate --config validated_005 --n-seeds 5"
+    echo "  $0 --fetch runs/sweep"
+    echo "  $0 --analyze runs/sweep/results.json"
     echo ""
     echo "Check progress with:"
     echo "  ssh $REMOTE \"tail -f $REMOTE_DIR/\$(basename \$1 .py)_output.log\""
@@ -37,7 +38,7 @@ if [ "$SCRIPT" = "--fetch" ]; then
     fi
     RESULTS_DIR="$1"
     echo "Fetching results from $REMOTE:$REMOTE_DIR/$RESULTS_DIR..."
-    rsync -avz "$REMOTE:$REMOTE_DIR/$RESULTS_DIR/" "./$RESULTS_DIR/"
+    rsync -avz $SSH_OPTS "$REMOTE:$REMOTE_DIR/$RESULTS_DIR/" "./$RESULTS_DIR/"
     echo "Results fetched to .$RESULTS_DIR/"
     exit 0
 fi
@@ -54,32 +55,24 @@ if [ "$SCRIPT" = "--analyze" ]; then
 fi
 
 echo "Ensuring remote directory exists..."
-ssh "$REMOTE" "mkdir -p $REMOTE_DIR"
+ssh -o LogLevel=ERROR "$REMOTE" "mkdir -p $REMOTE_DIR" 2>/dev/null || true
 
 echo "Syncing code to $REMOTE:$REMOTE_DIR..."
-rsync -avz --delete --exclude '.git' --exclude '.venv' --exclude 'runs' --exclude 'tuning' --exclude '__pycache__' --exclude '*.pyc' \
-    ./ "$REMOTE:$REMOTE_DIR/"
+rsync -avz --delete --exclude '.git' --exclude '.venv' --exclude 'runs' --exclude 'tuning' --exclude '__pycache__' --exclude '*.pyc' --exclude '*_output.log' \
+    ./ "$REMOTE:$REMOTE_DIR/" 2>/dev/null || true
 
 # Kill any existing process running the same script
-ssh "$REMOTE" "pkill -9 -f 'python $SCRIPT' 2>/dev/null || true"
+ssh -o LogLevel=ERROR "$REMOTE" "pkill -9 -f 'python $SCRIPT' 2>/dev/null || true" 2>/dev/null || true
 sleep 1
 
 echo "Starting '$SCRIPT $ARGS' on $REMOTE in background..."
 
-# Create a wrapper script on remote to handle background execution
-REMOTE_WRAPPER="/tmp/run_training_$(date +%s).sh"
-ssh "$REMOTE" "cat > $REMOTE_WRAPPER" <<EOF
-#!/bin/bash
-cd $REMOTE_DIR
-exec nohup env PYTHONPATH=. uv run python $SCRIPT $ARGS > $LOG_FILE 2>&1
-EOF
-
-# Run wrapper in background and clean up
-ssh "$REMOTE" "bash $REMOTE_WRAPPER & disown; sleep 1; rm -f $REMOTE_WRAPPER"
+# Run training in background on remote
+ssh -o LogLevel=ERROR "$REMOTE" "bash -c 'cd $REMOTE_DIR && export PYTHONPATH=. && nohup python $SCRIPT $ARGS > $LOG_FILE 2>&1 & echo \"Started\" && sleep 2'" 2>/dev/null || true
 
 echo ""
 echo "Training started. Check progress with:"
 echo "  ssh $REMOTE \"tail -f $REMOTE_DIR/$LOG_FILE\""
 echo ""
-PID=$(ssh "$REMOTE" "pgrep -f 'python $SCRIPT' | head -1" 2>/dev/null || echo 'N/A')
+PID=$(ssh -o LogLevel=ERROR "$REMOTE" "pgrep -f 'python $SCRIPT' | head -1" 2>/dev/null || echo 'N/A') 2>/dev/null
 echo "PID: $PID"
