@@ -65,7 +65,17 @@ ssh "$REMOTE" "pkill -9 -f 'python $SCRIPT' 2>/dev/null || true"
 sleep 1
 
 echo "Starting '$SCRIPT $ARGS' on $REMOTE in background..."
-ssh "$REMOTE" "bash -c 'cd $REMOTE_DIR && (nohup env PYTHONPATH=. uv run python $SCRIPT $ARGS > $LOG_FILE 2>&1) & disown'"
+
+# Create a wrapper script on remote to handle background execution
+REMOTE_WRAPPER="/tmp/run_training_$(date +%s).sh"
+ssh "$REMOTE" "cat > $REMOTE_WRAPPER" <<EOF
+#!/bin/bash
+cd $REMOTE_DIR
+exec nohup env PYTHONPATH=. uv run python $SCRIPT $ARGS > $LOG_FILE 2>&1
+EOF
+
+# Run wrapper in background and clean up
+ssh "$REMOTE" "bash $REMOTE_WRAPPER & disown; sleep 1; rm -f $REMOTE_WRAPPER"
 
 echo ""
 echo "Training started. Check progress with:"
