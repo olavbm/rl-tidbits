@@ -45,9 +45,10 @@ class EnvConfig:
     max_steps: int = 500
 
     # Physics
-    max_speed: float = 5.0
-    max_acceleration: float = 2.0
+    max_speed: float = 1.0
+    max_acceleration: float = 0.5
     dt: float = 0.1
+    velocity_damping: float = 0.9  # damping factor (1.0 = no damping)
 
     # Boids parameters
     separation_weight: float = 1.5

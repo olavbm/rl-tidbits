@@ -15,19 +15,19 @@ from jax_boids.ppo import make_distribution
 from jax_boids.visualize import animate_episode
 
 
-def load_checkpoint(run_name: str, runs_dir: str = "runs"):
+def load_checkpoint(run_name: str, runs_dir: str = ""):
     """Load params and configs from a training run.
 
     Args:
-        run_name: Name of the run directory (e.g., 'pred_vs_random_20260209_115130')
-        runs_dir: Parent directory containing run folders
+        run_name: Path to run directory (e.g., 'runs/long_training/validated_005_seed124/pred_vs_random_20260313_164350')
+        runs_dir: Additional prefix directory (usually empty)
 
     Returns:
         params: Network parameters
         train_config: Training configuration dict
         env_config: Environment configuration as EnvConfig
     """
-    run_dir = (Path(runs_dir) / run_name).resolve()
+    run_dir = Path(run_name).resolve()
 
     # Load params with Orbax (requires absolute paths)
     checkpointer = ocp.PyTreeCheckpointer()
@@ -132,10 +132,18 @@ def main():
         default=50,
         help="Animation interval in ms (default: 50)",
     )
+    parser.add_argument(
+        "--max-speed",
+        type=float,
+        default=1.0,
+        help="Maximum speed for all agents (default: 1.0)",
+    )
     args = parser.parse_args()
 
-    print(f"Loading checkpoint from {args.runs_dir}/{args.run_name}...")
-    params, train_config, env_config = load_checkpoint(args.run_name, args.runs_dir)
+    # Handle path: if run_name already contains a path, use it directly
+    checkpoint_path = args.run_name if "/" in args.run_name else f"{args.runs_dir}/{args.run_name}"
+    print(f"Loading checkpoint from {checkpoint_path}...")
+    params, train_config, env_config = load_checkpoint(checkpoint_path)
 
     prey_noise_scale = train_config.get("prey_noise_scale", 0.3)
     print(f"Environment: {env_config.n_predators} predators, {env_config.n_prey} prey")
@@ -158,6 +166,8 @@ def main():
     print(f"Final prey alive: {final_alive}/{env_config.n_prey}")
 
     animate_episode(states, env_config, interval=args.interval, save_path=args.save)
+    if args.save:
+        print(f"Saved animation to {args.save}")
 
 
 if __name__ == "__main__":

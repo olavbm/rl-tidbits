@@ -125,9 +125,10 @@ class PredatorPreyEnv:
         else:
             prey_accel = prey_boids
 
-        # Update velocities
-        new_pred_vel = state.predator_vel + pred_accel * cfg.dt
-        new_prey_vel = state.prey_vel + prey_accel * cfg.dt
+        # Apply velocity damping (smooth movement)
+        damping = getattr(cfg, "velocity_damping", 0.9)
+        new_pred_vel = state.predator_vel * damping + pred_accel * cfg.dt
+        new_prey_vel = state.prey_vel * damping + prey_accel * cfg.dt
 
         # Apply speed limits (predators slightly faster, prey speed from curriculum)
         new_pred_vel = clip_velocity(new_pred_vel, cfg.max_speed * cfg.predator_speed_bonus)
@@ -338,9 +339,7 @@ class PredatorPreyEnv:
         cfg = self.config
 
         # Compute min wrapped distance from each predator to any alive prey
-        pred_to_prey_diff = wrapped_diff(
-            prey_pos[None, :, :], pred_pos[:, None, :], cfg.world_size
-        )
+        pred_to_prey_diff = wrapped_diff(prey_pos[None, :, :], pred_pos[:, None, :], cfg.world_size)
         pred_to_prey_dists = jnp.linalg.norm(pred_to_prey_diff, axis=-1)
         pred_to_prey_dists = jnp.where(prey_alive[None, :], pred_to_prey_dists, 1e6)
         pred_min_dist_to_prey = jnp.min(pred_to_prey_dists, axis=1)  # [n_pred]
