@@ -41,6 +41,8 @@ class TrainConfig(NamedTuple):
     lr_anneal: bool = True  # Enable by default (improves training)
     min_lr: float = 0.0  # minimum LR for annealing (0.0 = 0x of initial LR)
     normalize_returns: bool = True  # Enable by default (improves training)
+    log_interval: int = 50  # log every N updates
+    checkpoint_interval: int = 500  # checkpoint every N updates
 
 
 class RunnerState(NamedTuple):
@@ -177,7 +179,8 @@ def train(
     from datetime import datetime
 
     env = PredatorPreyEnv(env_config)
-    n_updates = config.total_timesteps // (config.n_steps * config.n_envs)
+    steps_per_update = config.n_steps * config.n_envs
+    n_updates = config.total_timesteps // steps_per_update
 
     writer = None
     log_fn = None
@@ -212,14 +215,17 @@ def train(
         checkpoint_dir = (run_dir / "checkpoint").resolve()
 
         def checkpoint_fn(update_step, params):
-            """Save checkpoint every 100 updates."""
+            """Save checkpoint every checkpoint_interval updates."""
             update_step = int(update_step)
-            if update_step > 0 and update_step % 100 == 0:
+            if update_step > 0 and update_step % config.checkpoint_interval == 0:
                 checkpointer.save(str(checkpoint_dir), params, force=True)
 
         def log_fn(step, metrics):
             """Logging callback."""
             step = int(step)
+            update_step = step // steps_per_update
+            if update_step % config.log_interval != 0:
+                return
             writer.add_scalar("pred/policy_loss", float(metrics["policy_loss"]), step)
             writer.add_scalar("pred/value_loss", float(metrics["value_loss"]), step)
             writer.add_scalar("pred/entropy", float(metrics["entropy"]), step)
@@ -238,7 +244,13 @@ def train(
         print(f"Training for {config.total_timesteps:,} steps ({n_updates} updates)")
         if writer is not None:
             print(f"Logging to {writer.logdir}")
+            print(f"Log interval: {config.log_interval} updates")
+            print(f"Checkpoint interval: {config.checkpoint_interval} updates")
         print("Compiling training function...")
+    else:
+        print(f"Starting training: {config.total_timesteps:,} steps")
+        print(f"Log interval: {config.log_interval}")
+        print(f"Checkpoint interval: {config.checkpoint_interval}")
 
     train_fn = make_train(config, env, env_config, log_fn=log_fn, checkpoint_fn=checkpoint_fn)
     train_fn = jax.jit(train_fn)

@@ -16,40 +16,41 @@ Improve PPO training efficiency for predator-prey environment. Target: reduce pr
 
 ### Current Status
 
-**Expanded random hyperparameter sweep completed:**
-- 100 configs on simple env (1 predator, 3 prey, 10x10, 100 steps)
-- **7 configs achieved target prey_alive < 1.5** (best: 1.415)
-- Results in `runs/expanded_random_sweep/`
-- Best config: trial_099 (lr=1.3e-3, clip=0.22, ent=0.091, n_steps=64, n_epochs=2, ortho=True, lr_anneal=True, norm_ret=True)
+**Completed:**
+- Expanded random sweep (100 configs, 1M steps): 7 configs achieved prey_alive < 1.5
+- Two rounds of validation (2M steps): Only 2 configs consistently validated
+- Config database created with named validated configs
+
+**Key findings:**
+- Original best (trial_099, 1.415) failed validation at 1.500 - high variance
+- Only `validated_005` and `validated_043` reliably achieve ~1.500 prey_alive
+- Both use low learning rates (~1e-4), 128 n_steps, 10 n_epochs, no LR annealing
+- Validation is reproducible (8/10 configs identical between rounds)
 
 **Next steps:**
-- Validate top configs with extended training
-- Fine-tune around best hyperparameters
-- Test on larger environments (5v5)
+- Multi-seed validation on validated_005/validated_043 to confirm robustness
+- Test on 5v5 environment
+- Fine-tune around validated hyperparameters if needed
 
 **PPO features implemented:**
 - Orthogonal initialization (`networks.py`)
 - LR annealing (`ppo.py`)
 - Adam eps=1e-5 (always on)
 - Return normalization (`ppo.py`)
-- All controlled via `TrainConfig` flags in `train_single.py`
 
 ### Environment
 
-- Predator-prey domain with configurable agents and world size
+- Predator-prey domain: 1 predator, 3 prey, 10x10 grid, 100 steps
 - Heterogeneous agents with separate networks per agent type
-- Default PPO hyperparameters: γ=0.99, λ=0.95, clip=0.2, lr=3e-4, max_grad_norm=0.5
+- Default PPO: γ=0.99, λ=0.95, clip=0.2, lr=3e-4, max_grad_norm=0.5
 
 ### Key Files
 
+- `jax_boids/configs.py` - Named config database (validated_005, validated_043)
+- `jax_boids/validate_configs.py` - Extended validation script (2M steps)
 - `jax_boids/ppo.py` - Core PPO implementation
-- `jax_boids/networks.py` - ActorCritic network
-- `jax_boids/train_single.py` - Single-agent training (defaults: ortho=True, anneal=True, norm_ret=True)
-- `jax_boids/run_random_sweep.py` - Random hyperparameter sweep (broad search)
-- `jax_boids/run_fine_tuning_sweep.py` - Fine-tuning sweep (tight bounds around best)
+- `jax_boids/train_single.py` - Single-agent training (predators learn)
 - `jax_boids/analyze_sweep.py` - Sweep results analysis
-- `jax_boids/test_original_env.py` - Test configs on 5v5 environment
-- `jax_boids/collector.py` - Rollout collection
 - `jax_boids/telemetry/diagnostics.py` - Training diagnostics
 
 ## Deployment

@@ -61,10 +61,11 @@ rsync -avz --delete --exclude '.git' --exclude '.venv' --exclude 'runs' --exclud
     ./ "$REMOTE:$REMOTE_DIR/"
 
 # Kill any existing process running the same script
-ssh "$REMOTE" "pkill -f 'python $SCRIPT' || true"
+ssh "$REMOTE" "pkill -9 -f 'python $SCRIPT' 2>/dev/null || true"
+sleep 1
 
 echo "Starting '$SCRIPT $ARGS' on $REMOTE in background..."
-ssh "$REMOTE" "cd $REMOTE_DIR && nohup env PYTHONPATH=. uv run python $SCRIPT $ARGS > $LOG_FILE 2>&1 &"
+ssh "$REMOTE" "bash -c 'cd $REMOTE_DIR && nohup env PYTHONPATH=. uv run python $SCRIPT $ARGS > $LOG_FILE 2>&1 & disown'"
 
 echo ""
 echo "Training started. Check progress with:"
