@@ -128,7 +128,7 @@ def train_curriculum(
             alignment_weight=1.0,
             cohesion_weight=1.0,
             perception_radius=15.0,
-            capture_radius=2.0,
+            capture_radius=0.5,
             predator_speed_bonus=1.5,
             max_speed=5.0,
             max_acceleration=2.0,

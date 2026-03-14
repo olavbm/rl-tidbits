@@ -3,6 +3,7 @@
 import jax
 import jax.numpy as jnp
 import matplotlib.animation as animation
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 
 from jax_boids.envs.predator_prey import PredatorPreyEnv
@@ -22,9 +23,21 @@ def render_state(
     ax.set_aspect("equal")
     ax.set_facecolor("#1a1a2e")
 
-    # Draw predators (red)
+    # Draw predators (red) with capture radius
     pred_pos = state.predator_pos
     pred_vel = state.predator_vel
+    for i in range(len(pred_pos)):
+        circle = mpatches.Circle(
+            (float(pred_pos[i, 0]), float(pred_pos[i, 1])),
+            config.capture_radius,
+            color="red",
+            fill=False,
+            linestyle="--",
+            alpha=0.3,
+            linewidth=1,
+            zorder=1,
+        )
+        ax.add_patch(circle)
     ax.scatter(
         pred_pos[:, 0], pred_pos[:, 1], c="red", s=80, marker="^", label="Predators", zorder=3
     )

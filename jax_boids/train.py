@@ -12,14 +12,11 @@ import json
 import random
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-import jax
+from typing import Any, Dict, Optional
 
 from jax_boids.configs import CONFIGS, Config, get_config
-from jax_boids.envs.predator_prey import PredatorPreyEnv
-from jax_boids.envs.types import EnvConfig
-from jax_boids.train_single import TrainConfig, train
+from jax_boids.envs.types import EnvConfig, TrainConfig
+from jax_boids.train_single import train
 
 
 class Mode(Enum):
@@ -183,7 +180,10 @@ def sample_param(param_range: Dict[str, Any]) -> Any:
 
 
 def generate_sweep_configs(
-    n_configs: int, sweep_ranges: Optional[Dict[str, Any]] = None
+    n_configs: int,
+    sweep_ranges: Optional[Dict[str, Any]] = None,
+    total_timesteps: int = 200_000,
+    n_envs: int = 64,
 ) -> Dict[str, TrainConfig]:
     """Generate random configs for sweep."""
     if sweep_ranges is None:
@@ -211,8 +211,8 @@ def generate_sweep_configs(
             n_steps=sample_param(sweep_ranges["n_steps"]),
             n_epochs=sample_param(sweep_ranges["n_epochs"]),
             n_minibatches=4,
-            n_envs=64,
-            total_timesteps=200_000,
+            n_envs=n_envs,
+            total_timesteps=total_timesteps,
             prey_noise_scale=0.1,
             orthogonal_init=sample_param(sweep_ranges["orthogonal_init"]),
             lr_anneal=lr_anneal,
@@ -267,7 +267,11 @@ def perturb_value(base_value: Any, perturb_factor: float, param_name: str) -> An
 
 
 def generate_fine_tuning_configs(
-    base_config: Config, n_configs: int, perturb_factor: float = 0.2
+    base_config: Config,
+    n_configs: int,
+    perturb_factor: float = 0.2,
+    total_timesteps: int = 200_000,
+    n_envs: int = 64,
 ) -> Dict[str, TrainConfig]:
     """Generate configs by perturbing base config."""
     configs = {}
@@ -292,8 +296,8 @@ def generate_fine_tuning_configs(
             n_steps=perturb_value(base_config.n_steps, perturb_factor, "n_steps"),
             n_epochs=perturb_value(base_config.n_epochs, perturb_factor, "n_epochs"),
             n_minibatches=4,
-            n_envs=64,
-            total_timesteps=200_000,
+            n_envs=n_envs,
+            total_timesteps=total_timesteps,
             prey_noise_scale=0.1,
             orthogonal_init=perturb_value(
                 base_config.orthogonal_init, perturb_factor, "orthogonal_init"
@@ -383,8 +387,14 @@ def run_training(
     output_dir: Path,
     verbose: bool = True,
     log_interval: int = 50,
+    log_dir: Optional[str] = None,
 ) -> Dict:
-    """Run single training job. Returns metrics dict."""
+    """Run single training job. Returns metrics dict.
+
+    Args:
+        log_dir: Directory for TensorBoard logs and checkpoints.
+            None disables logging (used for sweeps to save memory).
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save config
@@ -409,26 +419,22 @@ def run_training(
     with open(output_dir / "config.json", "w") as f:
         json.dump(config_dict, f, indent=2)
 
-    env = PredatorPreyEnv(env_config)
-
     runner_state, metrics = train(
         config,
         env_config,
         seed=seed,
         verbose=verbose,
-        log_dir=str(output_dir),
+        log_dir=log_dir,
     )
 
     # Extract final metrics
     final_metrics = {
-        "prey_alive": float(metrics["prey_alive"][-1]) if metrics["prey_alive"] else 0.0,
-        "reward": float(metrics["reward"][-1]) if metrics["reward"] else 0.0,
-        "policy_loss": float(metrics["policy_loss"][-1]) if metrics["policy_loss"] else 0.0,
-        "value_loss": float(metrics["value_loss"][-1]) if metrics["value_loss"] else 0.0,
-        "entropy": float(metrics["entropy"][-1]) if metrics["entropy"] else 0.0,
-        "approx_kl": float(metrics["approx_kl"][-1])
-        if "approx_kl" in metrics and metrics["approx_kl"]
-        else 0.0,
+        "prey_alive": float(metrics["prey_alive"][-1]),
+        "reward": float(metrics["reward"][-1]),
+        "policy_loss": float(metrics["policy_loss"][-1]),
+        "value_loss": float(metrics["value_loss"][-1]),
+        "entropy": float(metrics["entropy"][-1]),
+        "approx_kl": float(metrics["approx_kl"][-1]),
     }
 
     with open(output_dir / "metrics.json", "w") as f:
@@ -456,11 +462,38 @@ def mode_train(args: argparse.Namespace) -> None:
         print(f"Training with config: {args.config[0]}")
         print(f"  lr={config.lr:.2e} clip={config.clip_eps:.3f} ent={config.ent_coef:.3f}")
         print(f"  n_steps={config.n_steps} n_epochs={config.n_epochs}")
+        train_config = config_to_train_config(config, args)
     else:
+        # Build config entirely from CLI args (inline hyperparams)
         print("Training with inline hyperparams")
-        return
 
-    train_config = config_to_train_config(config, args)
+        # Resolve boolean flags
+        orthogonal_init = args.orthogonal_init and not args.no_orthogonal_init
+        lr_anneal = args.lr_anneal and not args.no_lr_anneal
+        normalize_returns = args.normalize_returns and not args.no_normalize_returns
+
+        train_config = TrainConfig(
+            lr=args.lr or 3e-4,
+            clip_eps=args.clip or 0.2,
+            ent_coef=args.ent or 0.01,
+            vf_coef=args.vf_coef or 0.5,
+            gae_lambda=args.gae_lambda or 0.95,
+            max_grad_norm=args.max_grad_norm or 0.5,
+            n_steps=args.n_steps or 128,
+            n_epochs=args.n_epochs or 4,
+            n_minibatches=args.n_minibatches,
+            n_envs=args.n_envs or 32,
+            total_timesteps=args.total_timesteps or 1_000_000,
+            prey_noise_scale=0.1,
+            orthogonal_init=orthogonal_init,
+            lr_anneal=lr_anneal,
+            min_lr=args.min_lr,
+            normalize_returns=normalize_returns,
+        )
+        print(
+            f"  lr={train_config.lr:.2e} clip={train_config.clip_eps:.3f} ent={train_config.ent_coef:.3f}"
+        )
+        print(f"  n_steps={train_config.n_steps} n_epochs={train_config.n_epochs}")
     env_config = get_env_config(args)
 
     run_training(
@@ -470,6 +503,7 @@ def mode_train(args: argparse.Namespace) -> None:
         output_dir=output_dir,
         verbose=args.verbose,
         log_interval=args.log_interval,
+        log_dir=str(output_dir),
     )
 
     print(f"\nTraining complete! Output: {output_dir}")
@@ -489,7 +523,8 @@ def mode_sweep(args: argparse.Namespace) -> None:
 
     # Generate configs
     random.seed(args.seed)
-    configs = generate_sweep_configs(args.n_configs, sweep_ranges)
+    total_timesteps = args.total_timesteps or 200_000
+    configs = generate_sweep_configs(args.n_configs, sweep_ranges, total_timesteps=total_timesteps)
 
     # Load existing results
     results_path = output_dir / "results.json"
@@ -548,7 +583,8 @@ def mode_sweep(args: argparse.Namespace) -> None:
         new_results.append(result)
 
         print(
-            f"\n  {name} final prey_alive: {final_metrics['prey_alive']:.2f}, KL: {final_metrics['approx_kl']:.4f}"
+            f"\n  {name} final prey_alive: {final_metrics['prey_alive']:.2f}, "
+            f"KL: {final_metrics['approx_kl']:.4f}"
         )
 
     # Combine with existing results
@@ -619,7 +655,10 @@ def mode_sweep_fine(args: argparse.Namespace) -> None:
 
     # Generate fine-tuning configs
     random.seed(args.seed)
-    configs = generate_fine_tuning_configs(base_config, args.n_configs, args.perturb_factor)
+    total_timesteps = args.total_timesteps or 200_000
+    configs = generate_fine_tuning_configs(
+        base_config, args.n_configs, args.perturb_factor, total_timesteps=total_timesteps
+    )
 
     # Set output directory
     output_dir = Path(args.output or f"runs/fine_tuning_{args.base_config}")
@@ -704,7 +743,8 @@ def mode_sweep_fine(args: argparse.Namespace) -> None:
         new_results.append(result)
 
         print(
-            f"\n  {name} final prey_alive: {final_metrics['prey_alive']:.2f}, KL: {final_metrics['approx_kl']:.4f}"
+            f"\n  {name} final prey_alive: {final_metrics['prey_alive']:.2f}, "
+            f"KL: {final_metrics['approx_kl']:.4f}"
         )
 
     # Combine with existing results
@@ -792,9 +832,8 @@ def mode_validate(args: argparse.Namespace) -> None:
         seeds = list(range(123, 123 + args.n_seeds))
 
     print(f"\nSeeds: {seeds}")
-    print(
-        f"Total runs: {len(configs_to_validate)} configs × {len(seeds)} seeds = {len(configs_to_validate) * len(seeds)}"
-    )
+    total_runs = len(configs_to_validate) * len(seeds)
+    print(f"Total runs: {len(configs_to_validate)} configs × {len(seeds)} seeds = {total_runs}")
 
     # Save which configs we're validating
     validation_config = []

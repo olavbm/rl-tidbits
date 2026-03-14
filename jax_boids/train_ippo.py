@@ -10,9 +10,8 @@ import chex
 import jax
 from flax.training.train_state import TrainState
 
-from jax_boids.envs.curriculum import advance_curriculum
 from jax_boids.envs.predator_prey import PredatorPreyEnv
-from jax_boids.envs.types import BoidsState, EnvConfig
+from jax_boids.envs.types import BoidsState, EnvConfig, TrainConfig
 from jax_boids.ppo import (
     Transition,
     create_train_state,
@@ -20,23 +19,6 @@ from jax_boids.ppo import (
     ppo_update,
     select_on_reset,
 )
-
-
-class TrainConfig(NamedTuple):
-    """Training hyperparameters for multi-agent training."""
-
-    lr: float = 3e-4
-    gamma: float = 0.99
-    gae_lambda: float = 0.95
-    clip_eps: float = 0.2
-    vf_coef: float = 0.5
-    ent_coef: float = 0.01
-    max_grad_norm: float = 0.5
-    n_steps: int = 128
-    n_epochs: int = 4
-    n_minibatches: int = 4
-    total_timesteps: int = 1_000_000
-    n_envs: int = 32
 
 
 class RunnerState(NamedTuple):

@@ -7,6 +7,30 @@ import jax.numpy as jnp
 from flax import struct
 
 
+class TrainConfig(NamedTuple):
+    """Training hyperparameters for PPO training."""
+
+    lr: float = 3e-4
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    clip_eps: float = 0.2
+    vf_coef: float = 0.5
+    ent_coef: float = 0.01
+    max_grad_norm: float = 0.5
+    n_steps: int = 128
+    n_epochs: int = 4
+    n_minibatches: int = 4
+    total_timesteps: int = 1_000_000
+    n_envs: int = 32
+    prey_noise_scale: float = 0.3
+    orthogonal_init: bool = True
+    lr_anneal: bool = True
+    min_lr: float = 0.0
+    normalize_returns: bool = True
+    log_interval: int = 50
+    checkpoint_interval: int = 500
+
+
 @struct.dataclass
 class BoidsState:
     """Immutable state for predator-prey boids environment."""
@@ -57,7 +81,7 @@ class EnvConfig:
     perception_radius: float = 15.0
 
     # Predator-prey interaction
-    capture_radius: float = 2.0
+    capture_radius: float = 0.5
     predator_speed_bonus: float = 1.2  # predators slightly faster
 
     # Observation parameters

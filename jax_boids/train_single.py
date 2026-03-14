@@ -9,40 +9,17 @@ from typing import Dict, NamedTuple
 
 import chex
 import jax
+import jax.numpy as jnp
 import orbax.checkpoint as ocp
 from flax.training.train_state import TrainState
 
 from jax_boids.collector import PolicyConfig, PolicyType, RolloutConfig, collect_rollouts
 from jax_boids.envs.predator_prey import PredatorPreyEnv
-from jax_boids.envs.types import BoidsState, EnvConfig
+from jax_boids.envs.types import BoidsState, EnvConfig, TrainConfig
 from jax_boids.ppo import (
     create_train_state,
     ppo_update,
 )
-
-
-class TrainConfig(NamedTuple):
-    """Training hyperparameters for single-agent training."""
-
-    lr: float = 3e-4
-    gamma: float = 0.99
-    gae_lambda: float = 0.95
-    clip_eps: float = 0.2
-    vf_coef: float = 0.5
-    ent_coef: float = 0.01
-    max_grad_norm: float = 0.5
-    n_steps: int = 128
-    n_epochs: int = 4
-    n_minibatches: int = 4
-    total_timesteps: int = 1_000_000
-    n_envs: int = 32
-    prey_noise_scale: float = 0.3  # scale of random prey actions
-    orthogonal_init: bool = True  # Enable by default (improves training)
-    lr_anneal: bool = True  # Enable by default (improves training)
-    min_lr: float = 0.0  # minimum LR for annealing (0.0 = 0x of initial LR)
-    normalize_returns: bool = True  # Enable by default (improves training)
-    log_interval: int = 50  # log every N updates
-    checkpoint_interval: int = 500  # checkpoint every N updates
 
 
 class RunnerState(NamedTuple):
@@ -55,56 +32,68 @@ class RunnerState(NamedTuple):
     update_step: int
 
 
+class ScalarHParams(NamedTuple):
+    """Scalar hyperparameters passed as JAX arrays to avoid recompilation."""
+
+    gamma: chex.Array
+    gae_lambda: chex.Array
+    clip_eps: chex.Array
+    vf_coef: chex.Array
+    ent_coef: chex.Array
+    prey_noise_scale: chex.Array
+    normalize_returns: chex.Array  # bool as array
+
+
 def make_train(
-    config: TrainConfig,
+    n_steps: int,
+    n_envs: int,
+    n_epochs: int,
+    n_minibatches: int,
+    n_updates: int,
     env: PredatorPreyEnv,
     env_config: EnvConfig,
-    log_fn=None,
-    checkpoint_fn=None,
 ):
-    """Create the JIT-compiled training function.
+    """Create a JIT-compiled training function.
 
-    Predators learn via PPO, prey use random actions (Brownian motion).
+    Only shape-affecting params (n_steps, n_epochs, etc.) go in the closure.
+    Scalar hyperparams (lr, clip_eps, etc.) are passed as JAX arrays to
+    avoid recompilation when only scalars change.
+
+    Returns (train_fn, steps_per_update). train_fn signature:
+        train_fn(pred_state, env_states, obs, key, hparams) -> (runner_state, metrics)
     """
-    steps_per_update = config.n_steps * config.n_envs
+    steps_per_update = n_steps * n_envs
 
-    def _update_step(runner_state: RunnerState, _):
+    def _update_step(carry, _):
         """Single training update: rollout + PPO update for predators."""
+        runner_state, hparams = carry
         pred_state, env_states, obs, key, update_step = runner_state
 
-        # Configure policies: learned for predators, random for prey
         policies = {
             "predator": PolicyConfig(PolicyType.LEARNED, train_state=pred_state, noise_scale=0.0),
-            "prey": PolicyConfig(PolicyType.RANDOM, noise_scale=config.prey_noise_scale),
+            "prey": PolicyConfig(PolicyType.RANDOM, noise_scale=hparams.prey_noise_scale),
         }
+        rollout_config = RolloutConfig(n_steps=n_steps, n_envs=n_envs)
 
-        # Configure rollout collection
-        rollout_config = RolloutConfig(n_steps=config.n_steps, n_envs=config.n_envs)
-
-        # Collect rollouts using the abstraction
         key, (transitions, infos), obs, env_states = collect_rollouts(
             env, policies, env_config, rollout_config, key, obs, env_states
         )
 
-        # Separate key for PPO update
         k1, key = jax.random.split(key)
-
-        # PPO update for predators only
-        pred_state, pred_metrics, pred_adv_mean, pred_adv_std = ppo_update(
+        pred_state, pred_metrics, _, _ = ppo_update(
             pred_state,
             transitions["predator"],
             k1,
-            config.gamma,
-            config.gae_lambda,
-            config.clip_eps,
-            config.vf_coef,
-            config.ent_coef,
-            config.n_epochs,
-            config.n_minibatches,
-            normalize_returns=config.normalize_returns,
+            hparams.gamma,
+            hparams.gae_lambda,
+            hparams.clip_eps,
+            hparams.vf_coef,
+            hparams.ent_coef,
+            n_epochs,
+            n_minibatches,
+            normalize_returns=hparams.normalize_returns,
         )
 
-        # Metrics (keep as JAX arrays for scan compatibility)
         metrics = {
             "policy_loss": pred_metrics["policy_loss"],
             "value_loss": pred_metrics["value_loss"],
@@ -112,47 +101,50 @@ def make_train(
             "approx_kl": pred_metrics["approx_kl"],
             "reward": transitions["predator"].reward.mean(),
             "prey_alive": infos["prey_alive"].mean(),
-            "advantages_mean": pred_adv_mean,
-            "advantages_std": pred_adv_std,
         }
 
-        # Log metrics
-        if log_fn is not None:
-            step = update_step * steps_per_update
-            jax.debug.callback(log_fn, step, metrics)
-
-        # Save checkpoint periodically
-        if checkpoint_fn is not None:
-            jax.debug.callback(checkpoint_fn, update_step, pred_state.params)
-
         runner_state = RunnerState(pred_state, env_states, obs, key, update_step + 1)
-        return runner_state, metrics
+        return (runner_state, hparams), metrics
 
-    def train_fn(key: chex.PRNGKey):
-        """Full training loop."""
-        k1, k2, key = jax.random.split(key, 3)
-
-        n_updates = config.total_timesteps // (config.n_steps * config.n_envs)
-        pred_state = create_train_state(
-            k1,
-            env.observation_size,
-            env.action_size,
-            config.lr,
-            config.max_grad_norm,
-            total_updates=n_updates if config.lr_anneal else None,
-            orthogonal_init=config.orthogonal_init,
-            min_lr=config.min_lr,
-        )
-
-        env_keys = jax.random.split(k2, config.n_envs)
-        obs, env_states = jax.vmap(env.reset)(env_keys)
-
+    def train_fn(pred_state, env_states, obs, key, hparams):
+        """Full training loop — no CPU-GPU sync. Caller should jit (or vmap+jit)."""
         runner_state = RunnerState(pred_state, env_states, obs, key, 0)
-        runner_state, metrics = jax.lax.scan(_update_step, runner_state, None, length=n_updates)
-
+        (runner_state, _), metrics = jax.lax.scan(
+            _update_step, (runner_state, hparams), None, length=n_updates
+        )
         return runner_state, metrics
 
-    return train_fn
+    return train_fn, steps_per_update
+
+
+# Module-level cache: same (n_steps, n_envs, n_epochs, n_minibatches, n_updates)
+# returns the same jitted function, so JAX reuses the compiled XLA program.
+_train_fn_cache: dict = {}
+
+
+def get_train_fn(config: TrainConfig, env: PredatorPreyEnv, env_config: EnvConfig):
+    """Get a cached JIT-compiled training function.
+
+    Configs with the same shape-affecting params (n_steps, n_envs, n_epochs,
+    n_minibatches, n_updates) share one compilation. Only the first call per
+    unique combo pays the compilation cost.
+    """
+    n_updates = config.total_timesteps // (config.n_steps * config.n_envs)
+    cache_key = (config.n_steps, config.n_envs, config.n_epochs, config.n_minibatches, n_updates)
+
+    if cache_key not in _train_fn_cache:
+        train_fn, steps_per_update = make_train(
+            config.n_steps,
+            config.n_envs,
+            config.n_epochs,
+            config.n_minibatches,
+            n_updates,
+            env,
+            env_config,
+        )
+        _train_fn_cache[cache_key] = (jax.jit(train_fn), steps_per_update)
+
+    return _train_fn_cache[cache_key]
 
 
 def train(
@@ -183,8 +175,6 @@ def train(
     n_updates = config.total_timesteps // steps_per_update
 
     writer = None
-    log_fn = None
-    checkpoint_fn = None
     run_dir = None
 
     if log_dir is not None:
@@ -196,9 +186,7 @@ def train(
         writer = SummaryWriter(log_dir=str(run_dir))
         writer.add_text("config/train", str(config._asdict()))
         writer.add_text("config/env", str(env_config.__dict__))
-        writer.add_text("info", "Single-agent: predators learn, prey random")
 
-        # Save configs as JSON for loading later
         config_path = run_dir / "config.json"
         with open(config_path, "w") as f:
             json.dump(
@@ -210,53 +198,60 @@ def train(
                 indent=2,
             )
 
-        # Setup checkpointer (Orbax requires absolute paths)
-        checkpointer = ocp.PyTreeCheckpointer()
-        checkpoint_dir = (run_dir / "checkpoint").resolve()
-
-        def checkpoint_fn(update_step, params):
-            """Save checkpoint every checkpoint_interval updates."""
-            update_step = int(update_step)
-            if update_step > 0 and update_step % config.checkpoint_interval == 0:
-                checkpointer.save(str(checkpoint_dir), params, force=True)
-
-        def log_fn(step, metrics):
-            """Logging callback."""
-            step = int(step)
-            update_step = step // steps_per_update
-            if update_step % config.log_interval != 0:
-                return
-            writer.add_scalar("pred/policy_loss", float(metrics["policy_loss"]), step)
-            writer.add_scalar("pred/value_loss", float(metrics["value_loss"]), step)
-            writer.add_scalar("pred/entropy", float(metrics["entropy"]), step)
-            writer.add_scalar("pred/approx_kl", float(metrics["approx_kl"]), step)
-            writer.add_scalar("pred/reward", float(metrics["reward"]), step)
-            writer.add_scalar("env/prey_alive", float(metrics["prey_alive"]), step)
-            writer.flush()
-            if verbose:
-                prey = float(metrics["prey_alive"])
-                reward = float(metrics["reward"])
-                print(f"  Step {step:,} - prey_alive: {prey:.1f}, reward: {reward:.3f}")
-
     if verbose:
         noise = config.prey_noise_scale
         print(f"Single-agent training: predators learn, prey random (noise={noise})")
         print(f"Training for {config.total_timesteps:,} steps ({n_updates} updates)")
         if writer is not None:
             print(f"Logging to {writer.logdir}")
-            print(f"Log interval: {config.log_interval} updates")
-            print(f"Checkpoint interval: {config.checkpoint_interval} updates")
         print("Compiling training function...")
     else:
-        print(f"Starting training: {config.total_timesteps:,} steps")
-        print(f"Log interval: {config.log_interval}")
-        print(f"Checkpoint interval: {config.checkpoint_interval}")
+        print(f"Starting training: {config.total_timesteps:,} steps ({n_updates} updates)")
 
-    train_fn = make_train(config, env, env_config, log_fn=log_fn, checkpoint_fn=checkpoint_fn)
-    train_fn = jax.jit(train_fn)
-
+    # Init outside JIT so orthogonal_init/lr_anneal don't trigger recompilation
     key = jax.random.PRNGKey(seed)
-    runner_state, metrics = train_fn(key)
+    k1, k2, key = jax.random.split(key, 3)
+
+    pred_state = create_train_state(
+        k1,
+        env.observation_size,
+        env.action_size,
+        config.lr,
+        config.max_grad_norm,
+        total_updates=n_updates if config.lr_anneal else None,
+        orthogonal_init=config.orthogonal_init,
+        min_lr=config.min_lr,
+    )
+
+    env_keys = jax.random.split(k2, config.n_envs)
+    obs, env_states = jax.vmap(env.reset)(env_keys)
+
+    # Scalar hparams as JAX arrays — changing these does NOT trigger recompilation
+    hparams = ScalarHParams(
+        gamma=jnp.float32(config.gamma),
+        gae_lambda=jnp.float32(config.gae_lambda),
+        clip_eps=jnp.float32(config.clip_eps),
+        vf_coef=jnp.float32(config.vf_coef),
+        ent_coef=jnp.float32(config.ent_coef),
+        prey_noise_scale=jnp.float32(config.prey_noise_scale),
+        normalize_returns=jnp.bool_(config.normalize_returns),
+    )
+
+    # Cached JIT — only compiles once per unique (n_steps, n_envs, n_epochs) combo
+    train_fn, _ = get_train_fn(config, env, env_config)
+    runner_state, metrics = train_fn(pred_state, env_states, obs, key, hparams)
+
+    # Batch-write all logs after training (single CPU sync point)
+    if writer is not None:
+        for i in range(n_updates):
+            step = i * steps_per_update
+            writer.add_scalar("pred/policy_loss", float(metrics["policy_loss"][i]), step)
+            writer.add_scalar("pred/value_loss", float(metrics["value_loss"][i]), step)
+            writer.add_scalar("pred/entropy", float(metrics["entropy"][i]), step)
+            writer.add_scalar("pred/approx_kl", float(metrics["approx_kl"][i]), step)
+            writer.add_scalar("pred/reward", float(metrics["reward"][i]), step)
+            writer.add_scalar("env/prey_alive", float(metrics["prey_alive"][i]), step)
+        writer.flush()
 
     # Save final checkpoint
     if run_dir is not None:

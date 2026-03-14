@@ -243,9 +243,12 @@ def ppo_update(
     )
 
     # Normalize returns (reward normalization via return std)
-    if normalize_returns:
-        returns_std = returns.std() + 1e-8
-        returns = returns / returns_std
+    returns = jax.lax.cond(
+        normalize_returns,
+        lambda r: r / (r.std() + 1e-8),
+        lambda r: r,
+        returns,
+    )
 
     # Flatten time dimension
     obs = obs_flat.reshape(-1, obs_flat.shape[-1])
