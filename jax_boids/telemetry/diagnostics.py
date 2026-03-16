@@ -6,7 +6,7 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 
-from jax_boids.telemetry.reader import read_run, read_all_runs
+from jax_boids.telemetry.reader import read_all_runs, read_run
 
 
 @dataclass

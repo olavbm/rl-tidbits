@@ -44,6 +44,9 @@ class ActorCritic(nn.Module):
             nn.initializers.zeros,
             (self.action_dim,),
         )
+        # Clamp logstd to prevent divergence from entropy bonus
+        # Upper bound 0.5 → max std ≈ 1.65 (actions still meaningful)
+        action_logstd = jnp.clip(action_logstd, -5.0, 0.5)
 
         # Critic head
         value = nn.Dense(1, kernel_init=value_init)(x)

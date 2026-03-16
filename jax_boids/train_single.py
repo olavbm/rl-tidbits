@@ -1,7 +1,7 @@
-"""Single-agent training: predators learn, prey move randomly.
+"""Single-agent training: one side learns, the other moves randomly.
 
-Simplified version to verify the PPO implementation works correctly.
-Prey use Brownian motion (random velocity perturbations).
+By default predators learn and prey move randomly. Pass learner="prey"
+to invert: prey learn, predators move randomly.
 """
 
 import json
@@ -25,7 +25,7 @@ from jax_boids.ppo import (
 class RunnerState(NamedTuple):
     """State carried through the training loop."""
 
-    pred_state: TrainState
+    learner_state: TrainState
     env_states: BoidsState
     obs: Dict[str, chex.Array]
     key: chex.PRNGKey
@@ -40,7 +40,7 @@ class ScalarHParams(NamedTuple):
     clip_eps: chex.Array
     vf_coef: chex.Array
     ent_coef: chex.Array
-    prey_noise_scale: chex.Array
+    opponent_noise_scale: chex.Array
     normalize_returns: chex.Array  # bool as array
 
 
@@ -52,6 +52,8 @@ def make_train(
     n_updates: int,
     env: PredatorPreyEnv,
     env_config: EnvConfig,
+    learner: str = "predator",
+    opponent_state: "TrainState | None" = None,
 ):
     """Create a JIT-compiled training function.
 
@@ -59,19 +61,35 @@ def make_train(
     Scalar hyperparams (lr, clip_eps, etc.) are passed as JAX arrays to
     avoid recompilation when only scalars change.
 
+    Args:
+        learner: Which side learns — "predator" or "prey".
+        opponent_state: Frozen TrainState for the opponent. If provided,
+            opponent uses this learned policy instead of random actions.
+
     Returns (train_fn, steps_per_update). train_fn signature:
-        train_fn(pred_state, env_states, obs, key, hparams) -> (runner_state, metrics)
+        train_fn(learner_state, env_states, obs, key, hparams) -> (runner_state, metrics)
     """
+    opponent = "prey" if learner == "predator" else "predator"
     steps_per_update = n_steps * n_envs
 
     def _update_step(carry, _):
-        """Single training update: rollout + PPO update for predators."""
+        """Single training update: rollout + PPO update for learner."""
         runner_state, hparams = carry
-        pred_state, env_states, obs, key, update_step = runner_state
+        learner_state, env_states, obs, key, update_step = runner_state
+
+        # Opponent uses frozen checkpoint if provided, otherwise random
+        if opponent_state is not None:
+            opp_policy = PolicyConfig(
+                PolicyType.LEARNED,
+                train_state=opponent_state,
+                noise_scale=0.0,
+            )
+        else:
+            opp_policy = PolicyConfig(PolicyType.RANDOM, noise_scale=hparams.opponent_noise_scale)
 
         policies = {
-            "predator": PolicyConfig(PolicyType.LEARNED, train_state=pred_state, noise_scale=0.0),
-            "prey": PolicyConfig(PolicyType.RANDOM, noise_scale=hparams.prey_noise_scale),
+            learner: PolicyConfig(PolicyType.LEARNED, train_state=learner_state, noise_scale=0.0),
+            opponent: opp_policy,
         }
         rollout_config = RolloutConfig(n_steps=n_steps, n_envs=n_envs)
 
@@ -80,9 +98,9 @@ def make_train(
         )
 
         k1, key = jax.random.split(key)
-        pred_state, pred_metrics, _, _ = ppo_update(
-            pred_state,
-            transitions["predator"],
+        learner_state, learner_metrics, _, _ = ppo_update(
+            learner_state,
+            transitions[learner],
             k1,
             hparams.gamma,
             hparams.gae_lambda,
@@ -95,20 +113,20 @@ def make_train(
         )
 
         metrics = {
-            "policy_loss": pred_metrics["policy_loss"],
-            "value_loss": pred_metrics["value_loss"],
-            "entropy": pred_metrics["entropy"],
-            "approx_kl": pred_metrics["approx_kl"],
-            "reward": transitions["predator"].reward.mean(),
+            "policy_loss": learner_metrics["policy_loss"],
+            "value_loss": learner_metrics["value_loss"],
+            "entropy": learner_metrics["entropy"],
+            "approx_kl": learner_metrics["approx_kl"],
+            "reward": transitions[learner].reward.mean(),
             "prey_alive": infos["prey_alive"].mean(),
         }
 
-        runner_state = RunnerState(pred_state, env_states, obs, key, update_step + 1)
+        runner_state = RunnerState(learner_state, env_states, obs, key, update_step + 1)
         return (runner_state, hparams), metrics
 
-    def train_fn(pred_state, env_states, obs, key, hparams):
+    def train_fn(learner_state, env_states, obs, key, hparams):
         """Full training loop — no CPU-GPU sync. Caller should jit (or vmap+jit)."""
-        runner_state = RunnerState(pred_state, env_states, obs, key, 0)
+        runner_state = RunnerState(learner_state, env_states, obs, key, 0)
         (runner_state, _), metrics = jax.lax.scan(
             _update_step, (runner_state, hparams), None, length=n_updates
         )
@@ -122,16 +140,44 @@ def make_train(
 _train_fn_cache: dict = {}
 
 
-def get_train_fn(config: TrainConfig, env: PredatorPreyEnv, env_config: EnvConfig):
-    """Get a cached JIT-compiled training function.
+def get_train_fn(
+    config: TrainConfig,
+    env: PredatorPreyEnv,
+    env_config: EnvConfig,
+    learner: str = "predator",
+    opponent_state: "TrainState | None" = None,
+):
+    """Get a (cached) JIT-compiled training function.
 
-    Configs with the same shape-affecting params (n_steps, n_envs, n_epochs,
-    n_minibatches, n_updates) share one compilation. Only the first call per
-    unique combo pays the compilation cost.
+    Configs with the same shape-affecting params share one compilation.
+    Cache is bypassed when opponent_state is provided (frozen params
+    are baked into the compiled function).
     """
     n_updates = config.total_timesteps // (config.n_steps * config.n_envs)
-    cache_key = (config.n_steps, config.n_envs, config.n_epochs, config.n_minibatches, n_updates)
 
+    # Frozen opponent params are closed over — can't reuse cached function
+    if opponent_state is not None:
+        train_fn, steps_per_update = make_train(
+            config.n_steps,
+            config.n_envs,
+            config.n_epochs,
+            config.n_minibatches,
+            n_updates,
+            env,
+            env_config,
+            learner=learner,
+            opponent_state=opponent_state,
+        )
+        return jax.jit(train_fn), steps_per_update
+
+    cache_key = (
+        config.n_steps,
+        config.n_envs,
+        config.n_epochs,
+        config.n_minibatches,
+        n_updates,
+        learner,
+    )
     if cache_key not in _train_fn_cache:
         train_fn, steps_per_update = make_train(
             config.n_steps,
@@ -141,6 +187,7 @@ def get_train_fn(config: TrainConfig, env: PredatorPreyEnv, env_config: EnvConfi
             n_updates,
             env,
             env_config,
+            learner=learner,
         )
         _train_fn_cache[cache_key] = (jax.jit(train_fn), steps_per_update)
 
@@ -153,8 +200,10 @@ def train(
     seed: int = 0,
     verbose: bool = True,
     log_dir: str | None = "runs",
+    learner: str = "predator",
+    opponent_checkpoint: str | None = None,
 ):
-    """Train predators to catch randomly-moving prey.
+    """Train one side while the other moves randomly or uses a frozen checkpoint.
 
     Args:
         config: Training hyperparameters
@@ -162,13 +211,20 @@ def train(
         seed: Random seed
         verbose: Whether to print progress
         log_dir: Directory for tensorboard logs. None to disable.
+        learner: Which side learns — "predator" or "prey".
+        opponent_checkpoint: Path to checkpoint directory for frozen opponent.
+            If provided, opponent uses this trained policy instead of random.
 
     Returns:
-        final_state: RunnerState with trained predator network
+        final_state: RunnerState with trained network
         metrics: Training metrics over time
     """
     import pathlib
     from datetime import datetime
+
+    opponent = "prey" if learner == "predator" else "predator"
+    prefix = "pred" if learner == "predator" else "prey"
+    opp_mode = "frozen" if opponent_checkpoint else "random"
 
     env = PredatorPreyEnv(env_config)
     steps_per_update = config.n_steps * config.n_envs
@@ -181,7 +237,7 @@ def train(
         from tensorboardX import SummaryWriter
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_name = f"pred_vs_random_{timestamp}"
+        run_name = f"{learner}_vs_{opp_mode}_{timestamp}"
         run_dir = pathlib.Path(log_dir) / run_name
         writer = SummaryWriter(log_dir=str(run_dir))
         writer.add_text("config/train", str(config._asdict()))
@@ -193,14 +249,17 @@ def train(
                 {
                     "train": config._asdict(),
                     "env": {k: v for k, v in env_config.__dict__.items() if not k.startswith("_")},
+                    "learner": learner,
+                    "opponent_checkpoint": opponent_checkpoint,
                 },
                 f,
                 indent=2,
             )
 
     if verbose:
-        noise = config.prey_noise_scale
-        print(f"Single-agent training: predators learn, prey random (noise={noise})")
+        print(f"Single-agent training: {learner} learns, {opponent} {opp_mode}")
+        if opponent_checkpoint:
+            print(f"  Opponent checkpoint: {opponent_checkpoint}")
         print(f"Training for {config.total_timesteps:,} steps ({n_updates} updates)")
         if writer is not None:
             print(f"Logging to {writer.logdir}")
@@ -212,7 +271,7 @@ def train(
     key = jax.random.PRNGKey(seed)
     k1, k2, key = jax.random.split(key, 3)
 
-    pred_state = create_train_state(
+    learner_state = create_train_state(
         k1,
         env.observation_size,
         env.action_size,
@@ -222,6 +281,25 @@ def train(
         orthogonal_init=config.orthogonal_init,
         min_lr=config.min_lr,
     )
+
+    # Load frozen opponent if checkpoint provided
+    opp_state = None
+    if opponent_checkpoint:
+        k3, key = jax.random.split(key)
+        # Create a dummy TrainState with matching architecture, then swap in loaded params
+        opp_state = create_train_state(
+            k3,
+            env.observation_size,
+            env.action_size,
+            lr=1e-4,
+            max_grad_norm=0.5,
+        )
+        checkpointer = ocp.PyTreeCheckpointer()
+        ckpt_path = str(pathlib.Path(opponent_checkpoint).resolve())
+        loaded_params = checkpointer.restore(ckpt_path)
+        opp_state = opp_state.replace(params=loaded_params)
+        if verbose:
+            print(f"Loaded frozen {opponent} checkpoint")
 
     env_keys = jax.random.split(k2, config.n_envs)
     obs, env_states = jax.vmap(env.reset)(env_keys)
@@ -233,23 +311,29 @@ def train(
         clip_eps=jnp.float32(config.clip_eps),
         vf_coef=jnp.float32(config.vf_coef),
         ent_coef=jnp.float32(config.ent_coef),
-        prey_noise_scale=jnp.float32(config.prey_noise_scale),
+        opponent_noise_scale=jnp.float32(config.prey_noise_scale),
         normalize_returns=jnp.bool_(config.normalize_returns),
     )
 
-    # Cached JIT — only compiles once per unique (n_steps, n_envs, n_epochs) combo
-    train_fn, _ = get_train_fn(config, env, env_config)
-    runner_state, metrics = train_fn(pred_state, env_states, obs, key, hparams)
+    # Cached JIT — only compiles once per unique shape combo
+    train_fn, _ = get_train_fn(
+        config,
+        env,
+        env_config,
+        learner=learner,
+        opponent_state=opp_state,
+    )
+    runner_state, metrics = train_fn(learner_state, env_states, obs, key, hparams)
 
     # Batch-write all logs after training (single CPU sync point)
     if writer is not None:
         for i in range(n_updates):
             step = i * steps_per_update
-            writer.add_scalar("pred/policy_loss", float(metrics["policy_loss"][i]), step)
-            writer.add_scalar("pred/value_loss", float(metrics["value_loss"][i]), step)
-            writer.add_scalar("pred/entropy", float(metrics["entropy"][i]), step)
-            writer.add_scalar("pred/approx_kl", float(metrics["approx_kl"][i]), step)
-            writer.add_scalar("pred/reward", float(metrics["reward"][i]), step)
+            writer.add_scalar(f"{prefix}/policy_loss", float(metrics["policy_loss"][i]), step)
+            writer.add_scalar(f"{prefix}/value_loss", float(metrics["value_loss"][i]), step)
+            writer.add_scalar(f"{prefix}/entropy", float(metrics["entropy"][i]), step)
+            writer.add_scalar(f"{prefix}/approx_kl", float(metrics["approx_kl"][i]), step)
+            writer.add_scalar(f"{prefix}/reward", float(metrics["reward"][i]), step)
             writer.add_scalar("env/prey_alive", float(metrics["prey_alive"][i]), step)
         writer.flush()
 
@@ -257,7 +341,7 @@ def train(
     if run_dir is not None:
         checkpointer = ocp.PyTreeCheckpointer()
         checkpoint_dir = (run_dir / "checkpoint").resolve()
-        checkpointer.save(str(checkpoint_dir), runner_state.pred_state.params, force=True)
+        checkpointer.save(str(checkpoint_dir), runner_state.learner_state.params, force=True)
         if verbose:
             print(f"Saved final checkpoint to {checkpoint_dir}")
 

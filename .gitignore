@@ -9,6 +9,7 @@ wheels/
 # Virtual environments
 .venv
 
+# Artifacts
 runs/
-tests/
 tuning/
+*.gif

@@ -28,7 +28,6 @@ fi
 SCRIPT="$1"
 shift
 ARGS="$*"
-LOG_FILE="$(basename "$SCRIPT" .py)_output.log"
 
 # Handle special commands
 if [ "$SCRIPT" = "--fetch" ]; then
@@ -38,7 +37,7 @@ if [ "$SCRIPT" = "--fetch" ]; then
     fi
     RESULTS_DIR="$1"
     echo "Fetching results from $REMOTE:$REMOTE_DIR/$RESULTS_DIR..."
-    rsync -avz $SSH_OPTS "$REMOTE:$REMOTE_DIR/$RESULTS_DIR/" "./$RESULTS_DIR/"
+    rsync -avz "$REMOTE:$REMOTE_DIR/$RESULTS_DIR/" "./$RESULTS_DIR/"
     echo "Results fetched to .$RESULTS_DIR/"
     exit 0
 fi
@@ -54,6 +53,8 @@ if [ "$SCRIPT" = "--analyze" ]; then
     exit 0
 fi
 
+LOG_FILE="$(basename "$SCRIPT" .py)_output.log"
+
 echo "Ensuring remote directory exists..."
 ssh -o LogLevel=ERROR "$REMOTE" "mkdir -p $REMOTE_DIR" 2>/dev/null || true
 
@@ -65,16 +66,18 @@ rsync -avz --delete --exclude '.git' --exclude '.venv' --exclude 'runs' --exclud
 ssh -o LogLevel=ERROR "$REMOTE" "pkill -9 -f 'python $SCRIPT' 2>/dev/null || true" 2>/dev/null || true
 sleep 1
 
-echo "Starting '$SCRIPT $ARGS' on $REMOTE in background..."
+echo "Running '$SCRIPT $ARGS' on $REMOTE..."
 
-# Run training in background on remote
+# Run training in foreground, stream output
 # XLA_PYTHON_CLIENT_PREALLOCATE=false: don't grab all GPU memory upfront
 # XLA_PYTHON_CLIENT_MEM_FRACTION=0.10: limit to 10% of GPU (~2.5GB on 24GB)
-ssh -o LogLevel=ERROR "$REMOTE" "bash -c 'cd $REMOTE_DIR && export PYTHONPATH=. && export XLA_PYTHON_CLIENT_PREALLOCATE=false && export XLA_PYTHON_CLIENT_MEM_FRACTION=0.10 && nohup python $SCRIPT $ARGS > $LOG_FILE 2>&1 & echo \"Started\" && sleep 2'" 2>/dev/null || true
+ssh -o LogLevel=ERROR "$REMOTE" "bash -c 'cd $REMOTE_DIR && export PYTHONPATH=. && export XLA_PYTHON_CLIENT_PREALLOCATE=false && export XLA_PYTHON_CLIENT_MEM_FRACTION=0.10 && python $SCRIPT $ARGS 2>&1 | tee $LOG_FILE'" 2>/dev/null
+EXIT_CODE=${PIPESTATUS[0]}
 
 echo ""
-echo "Training started. Check progress with:"
-echo "  ssh $REMOTE \"tail -f $REMOTE_DIR/$LOG_FILE\""
-echo ""
-PID=$(ssh -o LogLevel=ERROR "$REMOTE" "pgrep -f 'python $SCRIPT' | head -1" 2>/dev/null || echo 'N/A') 2>/dev/null
-echo "PID: $PID"
+if [ "$EXIT_CODE" -eq 0 ]; then
+    echo "Done."
+else
+    echo "Failed (exit code $EXIT_CODE). See log:"
+    echo "  ssh $REMOTE \"cat $REMOTE_DIR/$LOG_FILE\""
+fi

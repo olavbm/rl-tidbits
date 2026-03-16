@@ -16,7 +16,8 @@ from typing import Any, Dict, Optional
 
 from jax_boids.configs import CONFIGS, Config, get_config
 from jax_boids.envs.types import EnvConfig, TrainConfig
-from jax_boids.train_single import train
+from jax_boids.train_ippo import train as train_ippo
+from jax_boids.train_single import train as train_single
 
 
 class Mode(Enum):
@@ -37,7 +38,7 @@ DEFAULT_SWEEP_RANGES = {
     "gae_lambda": {"type": "uniform", "min": 0.85, "max": 0.995},
     "max_grad_norm": {"type": "uniform", "min": 0.1, "max": 1.0},
     "n_steps": {"type": "choice", "values": [64, 128, 256, 512]},
-    "n_epochs": {"type": "choice", "values": [2, 4, 8, 10, 16]},
+    "n_epochs": {"type": "choice", "values": [32, 48, 64]},
     "orthogonal_init": {"type": "choice", "values": [True, False]},
     "lr_anneal": {"type": "choice", "values": [True, False]},
     "normalize_returns": {"type": "choice", "values": [True, False]},
@@ -132,7 +133,60 @@ Examples:
     parser.add_argument("--n-predators", type=int, default=1, help="Number of predators")
     parser.add_argument("--n-prey", type=int, default=3, help="Number of prey")
     parser.add_argument("--world-size", type=float, default=10.0, help="World size")
-    parser.add_argument("--max-steps", type=int, default=100, help="Max steps per episode")
+    parser.add_argument("--max-steps", type=int, default=200, help="Max steps per episode")
+    parser.add_argument(
+        "--prey-learn", action="store_true", help="Prey learn via IPPO (both sides learn)"
+    )
+    parser.add_argument(
+        "--boids-strength",
+        type=float,
+        default=1.0,
+        help="Multiplier for boids flocking forces (< 1.0 weakens flocking)",
+    )
+    parser.add_argument(
+        "--predator-speed-bonus",
+        type=float,
+        default=1.2,
+        help="Predator speed multiplier (default: 1.2)",
+    )
+    parser.add_argument(
+        "--prey-speed-mult",
+        type=float,
+        default=0.5,
+        help="Prey speed multiplier (default: 0.5)",
+    )
+    parser.add_argument(
+        "--capture-radius",
+        type=float,
+        default=0.3,
+        help="Capture radius (default: 0.3)",
+    )
+    parser.add_argument(
+        "--max-acceleration",
+        type=float,
+        default=0.5,
+        help="Max acceleration from actions (default: 0.5)",
+    )
+    parser.add_argument(
+        "--learner",
+        type=str,
+        default="predator",
+        choices=["predator", "prey"],
+        help="Which side learns in single-agent mode (default: predator)",
+    )
+    parser.add_argument(
+        "--opponent-checkpoint",
+        type=str,
+        help="Path to checkpoint dir for frozen opponent (single-agent mode only)",
+    )
+
+    # Prey-specific hyperparameters (IPPO only, override predator defaults)
+    parser.add_argument("--prey-lr", type=float, help="Prey learning rate (default: same as --lr)")
+    parser.add_argument("--prey-clip", type=float, help="Prey PPO clip epsilon")
+    parser.add_argument("--prey-ent", type=float, help="Prey entropy coefficient")
+    parser.add_argument("--prey-vf-coef", type=float, help="Prey value function coefficient")
+    parser.add_argument("--prey-gae-lambda", type=float, help="Prey GAE lambda")
+    parser.add_argument("--prey-max-grad-norm", type=float, help="Prey max gradient norm")
 
     # Sweep-specific
     parser.add_argument("--n-configs", type=int, default=100, help="Number of configs for sweep")
@@ -237,8 +291,8 @@ def perturb_value(base_value: Any, perturb_factor: float, param_name: str) -> An
             ]
             return random.choice(nearby)
         elif param_name == "n_epochs":
-            options = [2, 4, 8, 10, 16]
-            current_idx = options.index(base_value) if base_value in options else 2
+            options = [32, 48, 64]
+            current_idx = options.index(base_value) if base_value in options else 0
             nearby = [
                 options[max(0, current_idx - 1)],
                 base_value,
@@ -299,14 +353,10 @@ def generate_fine_tuning_configs(
             n_envs=n_envs,
             total_timesteps=total_timesteps,
             prey_noise_scale=0.1,
-            orthogonal_init=perturb_value(
-                base_config.orthogonal_init, perturb_factor, "orthogonal_init"
-            ),
+            orthogonal_init=base_config.orthogonal_init,
             lr_anneal=lr_anneal,
             min_lr=min_lr,
-            normalize_returns=perturb_value(
-                base_config.normalize_returns, perturb_factor, "normalize_returns"
-            ),
+            normalize_returns=base_config.normalize_returns,
         )
 
     return configs
@@ -337,15 +387,15 @@ def config_to_train_config(
         if args.normalize_returns
         else (not args.no_normalize_returns and getattr(config, "normalize_returns", False))
     )
-    orthogonal_init = (
-        args.orthogonal_init
-        if args.orthogonal_init
-        else (not args.no_orthogonal_init and getattr(config, "orthogonal_init", False))
-    )
-    normalize_returns = (
-        args.normalize_returns
-        if args.normalize_returns
-        else (not args.no_normalize_returns and getattr(config, "normalize_returns", False))
+
+    # Resolve prey overrides: CLI > config > None (= use predator value)
+    prey_lr = getattr(args, "prey_lr", None) or getattr(config, "prey_lr", None)
+    prey_clip = getattr(args, "prey_clip", None) or getattr(config, "prey_clip_eps", None)
+    prey_ent = getattr(args, "prey_ent", None) or getattr(config, "prey_ent_coef", None)
+    prey_vf = getattr(args, "prey_vf_coef", None) or getattr(config, "prey_vf_coef", None)
+    prey_gae = getattr(args, "prey_gae_lambda", None) or getattr(config, "prey_gae_lambda", None)
+    prey_grad = getattr(args, "prey_max_grad_norm", None) or getattr(
+        config, "prey_max_grad_norm", None
     )
 
     return TrainConfig(
@@ -360,23 +410,46 @@ def config_to_train_config(
         n_steps=args.n_steps if args.n_steps is not None else config.n_steps,
         n_epochs=args.n_epochs if args.n_epochs is not None else config.n_epochs,
         n_minibatches=args.n_minibatches,
-        n_envs=args.n_envs if args.n_envs is not None else 32,
+        n_envs=args.n_envs if args.n_envs is not None else config.n_envs,
         total_timesteps=total_timesteps or args.total_timesteps or 1_000_000,
         prey_noise_scale=0.1,
         orthogonal_init=orthogonal_init,
         lr_anneal=lr_anneal,
         min_lr=args.min_lr if args.min_lr else getattr(config, "min_lr", 0.0),
         normalize_returns=normalize_returns,
+        # Prey-specific overrides
+        prey_lr=prey_lr,
+        prey_clip_eps=prey_clip,
+        prey_ent_coef=prey_ent,
+        prey_vf_coef=prey_vf,
+        prey_gae_lambda=prey_gae,
+        prey_max_grad_norm=prey_grad,
+        prey_gamma=getattr(config, "prey_gamma", None),
+        prey_orthogonal_init=getattr(config, "prey_orthogonal_init", None),
+        prey_lr_anneal=getattr(config, "prey_lr_anneal", None),
+        prey_min_lr=getattr(config, "prey_min_lr", None),
+        prey_normalize_returns=getattr(config, "prey_normalize_returns", None),
     )
 
 
 def get_env_config(args: argparse.Namespace) -> EnvConfig:
     """Get environment config from CLI args."""
+    # prey_learn=True in env means prey actions are applied in physics.
+    # Needed for both IPPO (--prey-learn) and single-agent prey (--learner prey).
+    prey_learn = (
+        getattr(args, "prey_learn", False) or getattr(args, "learner", "predator") == "prey"
+    )
     return EnvConfig(
         n_predators=args.n_predators,
         n_prey=args.n_prey,
         world_size=args.world_size,
         max_steps=args.max_steps,
+        prey_learn=prey_learn,
+        boids_strength=getattr(args, "boids_strength", 1.0),
+        predator_speed_bonus=getattr(args, "predator_speed_bonus", 1.2),
+        prey_speed_mult=getattr(args, "prey_speed_mult", 0.5),
+        capture_radius=getattr(args, "capture_radius", 0.3),
+        max_acceleration=getattr(args, "max_acceleration", 0.5),
     )
 
 
@@ -388,12 +461,18 @@ def run_training(
     verbose: bool = True,
     log_interval: int = 50,
     log_dir: Optional[str] = None,
+    learner: str = "predator",
+    ippo: bool = False,
+    opponent_checkpoint: Optional[str] = None,
 ) -> Dict:
     """Run single training job. Returns metrics dict.
 
     Args:
         log_dir: Directory for TensorBoard logs and checkpoints.
             None disables logging (used for sweeps to save memory).
+        learner: Which side learns in single-agent mode ("predator" or "prey").
+        ippo: Use IPPO (both sides learn). Overrides learner.
+        opponent_checkpoint: Path to frozen opponent checkpoint (single-agent only).
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -414,28 +493,57 @@ def run_training(
         "lr_anneal": config.lr_anneal,
         "min_lr": config.min_lr,
         "normalize_returns": config.normalize_returns,
+        "prey_learn": env_config.prey_learn,
+        "boids_strength": env_config.boids_strength,
+        "predator_speed_bonus": env_config.predator_speed_bonus,
+        "prey_speed_mult": env_config.prey_speed_mult,
+        "capture_radius": env_config.capture_radius,
+        "max_acceleration": env_config.max_acceleration,
+        "learner": learner if not ippo else "both",
         "seed": seed,
     }
     with open(output_dir / "config.json", "w") as f:
         json.dump(config_dict, f, indent=2)
 
-    runner_state, metrics = train(
-        config,
-        env_config,
-        seed=seed,
-        verbose=verbose,
-        log_dir=log_dir,
-    )
+    if ippo:
+        runner_state, metrics = train_ippo(
+            config,
+            env_config,
+            seed=seed,
+            verbose=verbose,
+            log_dir=log_dir,
+        )
+    else:
+        runner_state, metrics = train_single(
+            config,
+            env_config,
+            seed=seed,
+            verbose=verbose,
+            log_dir=log_dir,
+            learner=learner,
+            opponent_checkpoint=opponent_checkpoint,
+        )
 
-    # Extract final metrics
-    final_metrics = {
-        "prey_alive": float(metrics["prey_alive"][-1]),
-        "reward": float(metrics["reward"][-1]),
-        "policy_loss": float(metrics["policy_loss"][-1]),
-        "value_loss": float(metrics["value_loss"][-1]),
-        "entropy": float(metrics["entropy"][-1]),
-        "approx_kl": float(metrics["approx_kl"][-1]),
-    }
+    # Extract final metrics (IPPO uses prefixed keys, single-agent doesn't)
+    if ippo:
+        final_metrics = {
+            "prey_alive": float(metrics["prey_alive"][-1]),
+            "pred_reward": float(metrics["pred_reward"][-1]),
+            "prey_reward": float(metrics["prey_reward"][-1]),
+            "pred_policy_loss": float(metrics["pred_policy_loss"][-1]),
+            "pred_approx_kl": float(metrics["pred_approx_kl"][-1]),
+            "prey_policy_loss": float(metrics["prey_policy_loss"][-1]),
+            "prey_approx_kl": float(metrics["prey_approx_kl"][-1]),
+        }
+    else:
+        final_metrics = {
+            "prey_alive": float(metrics["prey_alive"][-1]),
+            "reward": float(metrics["reward"][-1]),
+            "policy_loss": float(metrics["policy_loss"][-1]),
+            "value_loss": float(metrics["value_loss"][-1]),
+            "entropy": float(metrics["entropy"][-1]),
+            "approx_kl": float(metrics["approx_kl"][-1]),
+        }
 
     with open(output_dir / "metrics.json", "w") as f:
         json.dump(final_metrics, f, indent=2)
@@ -489,12 +597,25 @@ def mode_train(args: argparse.Namespace) -> None:
             lr_anneal=lr_anneal,
             min_lr=args.min_lr,
             normalize_returns=normalize_returns,
+            prey_lr=getattr(args, "prey_lr", None),
+            prey_clip_eps=getattr(args, "prey_clip", None),
+            prey_ent_coef=getattr(args, "prey_ent", None),
+            prey_vf_coef=getattr(args, "prey_vf_coef", None),
+            prey_gae_lambda=getattr(args, "prey_gae_lambda", None),
+            prey_max_grad_norm=getattr(args, "prey_max_grad_norm", None),
         )
-        print(
-            f"  lr={train_config.lr:.2e} clip={train_config.clip_eps:.3f} ent={train_config.ent_coef:.3f}"
-        )
+        lr, clip, ent = train_config.lr, train_config.clip_eps, train_config.ent_coef
+        print(f"  lr={lr:.2e} clip={clip:.3f} ent={ent:.3f}")
         print(f"  n_steps={train_config.n_steps} n_epochs={train_config.n_epochs}")
     env_config = get_env_config(args)
+    ippo = getattr(args, "prey_learn", False)
+    learner = getattr(args, "learner", "predator")
+    opponent_ckpt = getattr(args, "opponent_checkpoint", None)
+    if ippo:
+        print("  IPPO: both sides learn")
+    elif learner == "prey":
+        opp_mode = f"frozen ({opponent_ckpt})" if opponent_ckpt else "random"
+        print(f"  Single-agent: prey learns, predators {opp_mode}")
 
     run_training(
         train_config,
@@ -504,6 +625,9 @@ def mode_train(args: argparse.Namespace) -> None:
         verbose=args.verbose,
         log_interval=args.log_interval,
         log_dir=str(output_dir),
+        learner=learner,
+        ippo=ippo,
+        opponent_checkpoint=opponent_ckpt,
     )
 
     print(f"\nTraining complete! Output: {output_dir}")
@@ -563,6 +687,7 @@ def mode_sweep(args: argparse.Namespace) -> None:
             log_interval=args.log_interval,
         )
 
+        kl = final_metrics.get("approx_kl", final_metrics.get("pred_approx_kl", 0.0))
         result = {
             "name": name,
             "lr": config.lr,
@@ -578,14 +703,11 @@ def mode_sweep(args: argparse.Namespace) -> None:
             "min_lr": config.min_lr,
             "normalize_returns": config.normalize_returns,
             "prey_alive": final_metrics["prey_alive"],
-            "kl": final_metrics["approx_kl"],
+            "kl": kl,
         }
         new_results.append(result)
 
-        print(
-            f"\n  {name} final prey_alive: {final_metrics['prey_alive']:.2f}, "
-            f"KL: {final_metrics['approx_kl']:.4f}"
-        )
+        print(f"\n  {name} final prey_alive: {final_metrics['prey_alive']:.2f}, KL: {kl:.4f}")
 
     # Combine with existing results
     all_results = existing_results + new_results
@@ -723,6 +845,7 @@ def mode_sweep_fine(args: argparse.Namespace) -> None:
             verbose=args.verbose,
         )
 
+        kl = final_metrics.get("approx_kl", final_metrics.get("pred_approx_kl", 0.0))
         result = {
             "name": name,
             "lr": config.lr,
@@ -738,14 +861,11 @@ def mode_sweep_fine(args: argparse.Namespace) -> None:
             "min_lr": config.min_lr,
             "normalize_returns": config.normalize_returns,
             "prey_alive": final_metrics["prey_alive"],
-            "kl": final_metrics["approx_kl"],
+            "kl": kl,
         }
         new_results.append(result)
 
-        print(
-            f"\n  {name} final prey_alive: {final_metrics['prey_alive']:.2f}, "
-            f"KL: {final_metrics['approx_kl']:.4f}"
-        )
+        print(f"\n  {name} final prey_alive: {final_metrics['prey_alive']:.2f}, KL: {kl:.4f}")
 
     # Combine with existing results
     all_results = existing_results + new_results
@@ -864,6 +984,7 @@ def mode_validate(args: argparse.Namespace) -> None:
                 max_grad_norm=sweep_cfg["max_grad_norm"],
                 n_steps=sweep_cfg["n_steps"],
                 n_epochs=sweep_cfg["n_epochs"],
+                n_envs=sweep_cfg.get("n_envs", 64),
                 orthogonal_init=sweep_cfg["orthogonal_init"],
                 lr_anneal=sweep_cfg["lr_anneal"],
                 min_lr=sweep_cfg.get("min_lr", 0.0),

@@ -1,6 +1,6 @@
 """State and configuration types for boids environments."""
 
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 import chex
 import jax.numpy as jnp
@@ -8,27 +8,45 @@ from flax import struct
 
 
 class TrainConfig(NamedTuple):
-    """Training hyperparameters for PPO training."""
+    """Training hyperparameters for PPO training.
 
-    lr: float = 3e-4
+    Prey-specific overrides (prey_*) default to None, meaning use the
+    predator value. Only used in IPPO training where both sides learn.
+    """
+
+    # Predator (and default) hyperparameters
+    lr: float = 0.0027
     gamma: float = 0.99
-    gae_lambda: float = 0.95
-    clip_eps: float = 0.2
-    vf_coef: float = 0.5
-    ent_coef: float = 0.01
-    max_grad_norm: float = 0.5
-    n_steps: int = 128
-    n_epochs: int = 4
+    gae_lambda: float = 0.87
+    clip_eps: float = 0.33
+    vf_coef: float = 0.93
+    ent_coef: float = 0.048
+    max_grad_norm: float = 0.515
+    n_steps: int = 256
+    n_epochs: int = 10
     n_minibatches: int = 4
     total_timesteps: int = 1_000_000
     n_envs: int = 32
     prey_noise_scale: float = 0.3
-    orthogonal_init: bool = True
-    lr_anneal: bool = True
+    orthogonal_init: bool = False
+    lr_anneal: bool = False
     min_lr: float = 0.0
     normalize_returns: bool = True
     log_interval: int = 50
     checkpoint_interval: int = 500
+
+    # Prey-specific overrides (None = use predator value)
+    prey_lr: Optional[float] = None
+    prey_gamma: Optional[float] = None
+    prey_gae_lambda: Optional[float] = None
+    prey_clip_eps: Optional[float] = None
+    prey_vf_coef: Optional[float] = None
+    prey_ent_coef: Optional[float] = None
+    prey_max_grad_norm: Optional[float] = None
+    prey_orthogonal_init: Optional[bool] = None
+    prey_lr_anneal: Optional[bool] = None
+    prey_min_lr: Optional[float] = None
+    prey_normalize_returns: Optional[bool] = None
 
 
 @struct.dataclass
@@ -45,28 +63,16 @@ class BoidsState:
 
 
 @struct.dataclass
-class CurriculumStage:
-    """Configuration for a single curriculum stage."""
-
-    name: str
-    n_prey: int
-    world_size: float
-    prey_speed_mult: float = 1.0
-    max_steps: int = 500
-    predator_speed_mult: float = 1.0
-
-
-@struct.dataclass
 class EnvConfig:
     """Configuration for the predator-prey environment."""
 
     # Agent counts
-    n_predators: int = 5
-    n_prey: int = 10
+    n_predators: int = 1
+    n_prey: int = 3
 
     # World parameters
-    world_size: float = 100.0
-    max_steps: int = 500
+    world_size: float = 10.0
+    max_steps: int = 200
 
     # Physics
     max_speed: float = 1.0
@@ -81,7 +87,7 @@ class EnvConfig:
     perception_radius: float = 15.0
 
     # Predator-prey interaction
-    capture_radius: float = 0.5
+    capture_radius: float = 0.3
     predator_speed_bonus: float = 1.2  # predators slightly faster
 
     # Observation parameters
@@ -89,14 +95,10 @@ class EnvConfig:
     k_nearest_enemy: int = 3  # observe 3 nearest enemy
 
     # Learning mode
-    prey_learn: bool = True  # if False, prey don't learn (passive boids)
+    prey_learn: bool = False  # if False, prey don't learn (passive boids)
     distance_reward: bool = True  # if False, only capture reward for predators
-    prey_speed_mult: float = 1.0  # multiplier for prey max speed (curriculum)
-
-    # Curriculum
-    curriculum: list[CurriculumStage] | None = None
-    curriculum_timesteps: int = 0
-    current_stage: int = 0
+    prey_speed_mult: float = 0.5  # multiplier for prey max speed
+    boids_strength: float = 1.0  # multiplier for all boids forces (< 1.0 weakens flocking)
 
 
 class Observation(NamedTuple):

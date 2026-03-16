@@ -49,8 +49,13 @@ def test_wrapped_diff_basic():
 def test_capture_across_boundary():
     """Predator at pos 19 should capture prey at pos 1 in a 20x20 world."""
     cfg = EnvConfig(
-        n_predators=1, n_prey=1, world_size=20.0, capture_radius=3.0,
-        k_nearest_same=0, k_nearest_enemy=1, max_steps=100,
+        n_predators=1,
+        n_prey=1,
+        world_size=20.0,
+        capture_radius=3.0,
+        k_nearest_same=0,
+        k_nearest_enemy=1,
+        max_steps=100,
     )
     env = PredatorPreyEnv(cfg)
 
@@ -71,8 +76,13 @@ def test_capture_across_boundary():
 def test_no_capture_without_wrapping_would_miss():
     """Agents far apart in raw coords but close when wrapped should still capture."""
     cfg = EnvConfig(
-        n_predators=1, n_prey=1, world_size=20.0, capture_radius=3.0,
-        k_nearest_same=0, k_nearest_enemy=1, max_steps=100,
+        n_predators=1,
+        n_prey=1,
+        world_size=20.0,
+        capture_radius=3.0,
+        k_nearest_same=0,
+        k_nearest_enemy=1,
+        max_steps=100,
     )
     env = PredatorPreyEnv(cfg)
 
@@ -93,8 +103,12 @@ def test_no_capture_without_wrapping_would_miss():
 def test_dead_prey_not_in_obs():
     """Dead prey should appear as zeros in predator observations."""
     cfg = EnvConfig(
-        n_predators=1, n_prey=2, world_size=100.0,
-        k_nearest_same=0, k_nearest_enemy=2, max_steps=100,
+        n_predators=1,
+        n_prey=2,
+        world_size=100.0,
+        k_nearest_same=0,
+        k_nearest_enemy=2,
+        max_steps=100,
     )
     env = PredatorPreyEnv(cfg)
 
@@ -107,7 +121,8 @@ def test_dead_prey_not_in_obs():
     obs = env.get_obs(state)
     pred_obs = obs["predator"][0]
 
-    # obs layout: [my_vel(2), same_rel_pos(0*2), same_rel_vel(0*2), enemy_rel_pos(2*2), enemy_rel_vel(2*2)]
+    # obs: [my_vel(2), same_rel_pos(0*2), same_rel_vel(0*2),
+    #       enemy_rel_pos(2*2), enemy_rel_vel(2*2)]
     # With k_nearest_same=0: no same-team obs
     # enemy_rel_pos starts at index 2
     enemy_rel_pos = pred_obs[2:6].reshape(2, 2)  # 2 enemies, 2D each
@@ -126,8 +141,12 @@ def test_dead_prey_not_in_obs():
 def test_obs_wrapping():
     """Observations should show shortest path across boundary."""
     cfg = EnvConfig(
-        n_predators=1, n_prey=1, world_size=20.0,
-        k_nearest_same=0, k_nearest_enemy=1, max_steps=100,
+        n_predators=1,
+        n_prey=1,
+        world_size=20.0,
+        k_nearest_same=0,
+        k_nearest_enemy=1,
+        max_steps=100,
     )
     env = PredatorPreyEnv(cfg)
 

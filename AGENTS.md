@@ -14,15 +14,20 @@ Reduce prey_alive from ~2.5 to <1.5 (predator-only learning), then enable two-si
 
 ### Status
 
-- Large sweep running on hoppetusse: 100 configs, 1M timesteps each (`runs/big_sweep_1m/`)
-- Previous validated configs: `validated_005`, `validated_043` (both ~1.500 prey_alive)
+- Current best (1 predator): `best_r03` with prey_alive=1.72 (200 steps, half-speed prey)
+- **New setup**: 2 predators (shared weights), 5 prey (non-learning boids)
+- Previous validated configs: `validated_005`, `validated_043` (both ~1.500 prey_alive with old env)
 - GPU utilization is low when llama-server occupies GPU memory on hoppetusse
 
 ### Environment
 
-- Predator-prey: 1 predator, 3 prey, 10x10 grid, 100 steps
-- Heterogeneous agents with separate networks per agent type
+- Predator-prey: 2 predators, 5 prey, 10x10 grid, 200 steps
+- Predators share network weights (parameter sharing)
+- Prey don't learn (passive boids with flocking behavior)
 - Physics: max_speed=1.0, max_acceleration=0.5, velocity_damping=0.9
+- Prey speed multiplier: 0.5 (predator has 2.4× speed advantage)
+- Capture radius: 0.3
+- Observation: k_nearest_same=1, k_nearest_enemy=2 (14-dim obs)
 
 ### Key Files
 

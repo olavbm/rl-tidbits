@@ -1,8 +1,6 @@
 """Read TensorBoard event files using tbparse."""
 
-import os
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 from tbparse import SummaryReader

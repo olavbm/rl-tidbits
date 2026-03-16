@@ -105,13 +105,14 @@ class PredatorPreyEnv:
         prey_actions = actions["prey"]  # [n_prey, 2]
 
         # Compute boids forces for prey only (predators hunt, don't flock)
+        boids_strength = getattr(cfg, "boids_strength", 1.0)
         prey_boids = compute_boids_forces(
             state.prey_pos,
             state.prey_vel,
             cfg.perception_radius,
-            cfg.separation_weight,
-            cfg.alignment_weight,
-            cfg.cohesion_weight,
+            cfg.separation_weight * boids_strength,
+            cfg.alignment_weight * boids_strength,
+            cfg.cohesion_weight * boids_strength,
             cfg.world_size,
         )
 
@@ -346,7 +347,7 @@ class PredatorPreyEnv:
 
         n_captures = jnp.sum(captures)
         pred_rewards = compute_predator_rewards(
-            n_captures, cfg.n_predators, pred_min_dist_to_prey, cfg.distance_reward
+            n_captures, cfg.n_predators, pred_min_dist_to_prey, cfg.distance_reward, cfg.world_size
         )
         prey_rewards = compute_prey_rewards(
             prey_pos, pred_pos, prey_alive, captures, cfg.world_size

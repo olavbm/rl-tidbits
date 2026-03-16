@@ -64,7 +64,8 @@ def test_reward_signal_exists():
     pred_to_prey = prey_pos[None, :] - pred_pos  # [2, 1, 2]
     distances = jnp.linalg.norm(pred_to_prey, axis=-1)
     print(f"Initial distances to prey: {distances}")
-    print(f"Expected distance reward: {(50.0 - distances) * 0.05}")
+    max_dist = 50.0 * 0.707
+    print(f"Expected distance reward: {jnp.clip(1.0 - distances / max_dist, 0.0, 1.0)}")
 
     # Test 1: Random actions
     key, k1, k2, k3 = jax.random.split(key, 4)

@@ -1,14 +1,18 @@
 """Named hyperparameter configs for validation and iteration."""
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Optional
 
 
 @dataclass
 class Config:
-    """PPO training configuration."""
+    """PPO training configuration.
 
-    # Learning
+    Prey-specific overrides (prey_*) default to None, meaning use the
+    predator value. Only relevant for IPPO training.
+    """
+
+    # Learning (predator / default)
     lr: float
     clip_eps: float
     ent_coef: float
@@ -20,11 +24,27 @@ class Config:
     n_steps: int
     n_epochs: int
 
+    # Scale
+    n_envs: int
+
     # Features
     orthogonal_init: bool
     lr_anneal: bool
     min_lr: float
     normalize_returns: bool
+
+    # Prey-specific overrides (None = use predator value)
+    prey_lr: Optional[float] = None
+    prey_gamma: Optional[float] = None
+    prey_gae_lambda: Optional[float] = None
+    prey_clip_eps: Optional[float] = None
+    prey_vf_coef: Optional[float] = None
+    prey_ent_coef: Optional[float] = None
+    prey_max_grad_norm: Optional[float] = None
+    prey_orthogonal_init: Optional[bool] = None
+    prey_lr_anneal: Optional[bool] = None
+    prey_min_lr: Optional[float] = None
+    prey_normalize_returns: Optional[bool] = None
 
     # Metadata
     name: str = ""
@@ -50,6 +70,7 @@ CONFIGS: Dict[str, Config] = {
         max_grad_norm=0.7562141181553143,
         n_steps=128,
         n_epochs=10,
+        n_envs=32,
         orthogonal_init=False,
         lr_anneal=False,
         min_lr=0.0,
@@ -67,6 +88,7 @@ CONFIGS: Dict[str, Config] = {
         max_grad_norm=0.761170654680722,
         n_steps=128,
         n_epochs=10,
+        n_envs=32,
         orthogonal_init=True,
         lr_anneal=False,
         min_lr=0.0,
@@ -85,6 +107,7 @@ CONFIGS: Dict[str, Config] = {
         max_grad_norm=0.39194460287058386,
         n_steps=64,
         n_epochs=2,
+        n_envs=32,
         orthogonal_init=True,
         lr_anneal=True,
         min_lr=0.00039723911837556415,
@@ -103,6 +126,7 @@ CONFIGS: Dict[str, Config] = {
         max_grad_norm=0.5850795607005614,
         n_steps=512,
         n_epochs=16,
+        n_envs=32,
         orthogonal_init=False,
         lr_anneal=False,
         min_lr=0.0,
@@ -120,6 +144,7 @@ CONFIGS: Dict[str, Config] = {
         max_grad_norm=0.44667589001025443,
         n_steps=128,
         n_epochs=8,
+        n_envs=32,
         orthogonal_init=True,
         lr_anneal=False,
         min_lr=0.0,
@@ -138,6 +163,7 @@ CONFIGS: Dict[str, Config] = {
         max_grad_norm=0.5150349220194979,
         n_steps=256,
         n_epochs=10,
+        n_envs=64,
         orthogonal_init=False,
         lr_anneal=False,
         min_lr=0.0,
@@ -155,6 +181,7 @@ CONFIGS: Dict[str, Config] = {
         max_grad_norm=0.8259066051186392,
         n_steps=128,
         n_epochs=2,
+        n_envs=64,
         orthogonal_init=True,
         lr_anneal=False,
         min_lr=0.0,
@@ -172,11 +199,141 @@ CONFIGS: Dict[str, Config] = {
         max_grad_norm=0.5224572504374592,
         n_steps=512,
         n_epochs=8,
+        n_envs=64,
         orthogonal_init=True,
         lr_anneal=True,
         min_lr=0.0004904075209038447,
         normalize_returns=True,
         notes="3rd in big_sweep_1m: prey_alive=1.704, KL=0.0039",
+    ),
+    # Big sweep r03 (capture_radius=0.3, 1M steps, 100 configs) - top performers
+    "sweep_r03_003": Config(
+        name="sweep_r03_003",
+        source="sweep_r03/trial_003",
+        lr=0.0025995856171946224,
+        clip_eps=0.25674119585232913,
+        ent_coef=0.02496523257064187,
+        vf_coef=0.9417215290211199,
+        gae_lambda=0.8614260287213764,
+        max_grad_norm=0.3638604532663836,
+        n_steps=256,
+        n_epochs=16,
+        n_envs=64,
+        orthogonal_init=True,
+        lr_anneal=True,
+        min_lr=0.0007798756851583867,
+        normalize_returns=True,
+        notes="Best in sweep_r03 (r=0.3): prey_alive=2.17, KL=0.0038",
+    ),
+    "sweep_r03_022": Config(
+        name="sweep_r03_022",
+        source="sweep_r03/trial_022",
+        lr=0.004260814802596222,
+        clip_eps=0.47061781598139224,
+        ent_coef=0.04085183988470729,
+        vf_coef=0.7871438505920612,
+        gae_lambda=0.8846094631292977,
+        max_grad_norm=0.45620726211212903,
+        n_steps=256,
+        n_epochs=10,
+        n_envs=64,
+        orthogonal_init=False,
+        lr_anneal=False,
+        min_lr=0.0,
+        normalize_returns=True,
+        notes="2nd in sweep_r03 (r=0.3): prey_alive=2.18, KL=0.0077",
+    ),
+    "sweep_r03_080": Config(
+        name="sweep_r03_080",
+        source="sweep_r03/trial_080",
+        lr=0.0027413667918798415,
+        clip_eps=0.3288696658418369,
+        ent_coef=0.04816595837126261,
+        vf_coef=0.9346217620176661,
+        gae_lambda=0.8707520694186339,
+        max_grad_norm=0.5150349220194979,
+        n_steps=256,
+        n_epochs=10,
+        n_envs=64,
+        orthogonal_init=False,
+        lr_anneal=False,
+        min_lr=0.0,
+        normalize_returns=True,
+        notes="3rd in sweep_r03 (r=0.3): prey_alive=2.20, KL=0.0036",
+    ),
+    # Fine-tuned configs (capture_radius=0.3, 5M steps)
+    "best_r03": Config(
+        name="best_r03",
+        source="fine_tuning_sweep_r03_003/fine_011",
+        lr=0.002652900442367417,
+        clip_eps=0.28813170816691563,
+        ent_coef=0.024402997757694122,
+        vf_coef=1.0674575613742217,
+        gae_lambda=0.8373347764625199,
+        max_grad_norm=0.2547925045246027,
+        n_steps=256,
+        n_epochs=16,
+        n_envs=64,
+        orthogonal_init=False,
+        lr_anneal=False,
+        min_lr=0.0,
+        normalize_returns=True,
+        notes="Best at r=0.3: prey_alive=2.08, KL=0.039 (high). Fine-tuned from sweep_r03_003.",
+    ),
+    "best_r03_stable": Config(
+        name="best_r03_stable",
+        source="fine_tuning_sweep_r03_003/fine_014",
+        lr=0.002757922486960815,
+        clip_eps=0.2376695437266057,
+        ent_coef=0.020374263488738473,
+        vf_coef=0.6858570405874247,
+        gae_lambda=0.6109012199674343,
+        max_grad_norm=0.35888235068408364,
+        n_steps=512,
+        n_epochs=10,
+        n_envs=64,
+        orthogonal_init=False,
+        lr_anneal=True,
+        min_lr=0.0008273767460882445,
+        normalize_returns=True,
+        notes="2nd best at r=0.3: prey_alive=2.09, KL=0.003. From sweep_r03_003.",
+    ),
+    # 2-predator configs (shared weights, 5 prey, non-learning)
+    "pred2_base": Config(
+        name="pred2_base",
+        source="derived from best_r03",
+        lr=0.0027,
+        clip_eps=0.33,
+        ent_coef=0.048,
+        vf_coef=0.93,
+        gae_lambda=0.87,
+        max_grad_norm=0.515,
+        n_steps=256,
+        n_epochs=10,
+        n_envs=64,
+        orthogonal_init=False,
+        lr_anneal=False,
+        min_lr=0.0,
+        normalize_returns=True,
+        notes="Base config for 2 predators, 5 prey. Derived from best_r03.",
+    ),
+    "best_pred2": Config(
+        name="best_pred2",
+        source="fine_pred2_003_v2/fine_000",
+        lr=0.0026952036273721618,
+        clip_eps=0.22962322154656425,
+        ent_coef=0.021864072717850163,
+        vf_coef=1.0155437306641852,
+        gae_lambda=0.9067109111002777,
+        max_grad_norm=0.4179553286441464,
+        n_steps=128,
+        n_epochs=16,
+        n_envs=64,
+        orthogonal_init=True,
+        lr_anneal=False,
+        min_lr=0.0,
+        normalize_returns=True,
+        notes="Best 2-pred config: prey_alive=2.37 at 5M steps.",
     ),
 }
 

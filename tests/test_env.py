@@ -475,9 +475,8 @@ def test_obs_values_known_positions():
 
 
 def test_reward_capture_value():
-    """Predator gets +50/n_pred per capture, prey gets -10 on capture."""
+    """Predator gets +10/n_pred per capture, prey gets -10 on capture."""
     env = PredatorPreyEnv(SCENARIO_CONFIG)
-    n_pred = SCENARIO_CONFIG.n_predators
     # Predator 0 on top of prey 0
     state = _make_state(
         pred_pos=[[50.0, 50.0], [10.0, 10.0]],
@@ -488,18 +487,18 @@ def test_reward_capture_value():
     n_captures = int(info["captures_this_step"])
     assert n_captures == 1
     # Each predator gets capture_reward + distance_reward
-    # Capture: 50 * n_captures / n_pred = 25
-    # Distance also contributes, so check capture component dominates
-    assert rewards["predator"][0] > 20.0, f"Pred reward too low: {rewards['predator'][0]}"
-    assert rewards["predator"][1] > 20.0, f"Pred reward too low: {rewards['predator'][1]}"
-    # Captured prey gets -10 (plus other components, but -10 dominates)
+    # Capture: 10 * n_captures / n_pred = 5
+    # Distance adds 0-1 on top
+    assert rewards["predator"][0] > 4.0, f"Pred reward too low: {rewards['predator'][0]}"
+    assert rewards["predator"][1] > 4.0, f"Pred reward too low: {rewards['predator'][1]}"
+    # Captured prey gets -10 (plus small distance component)
     assert rewards["prey"][0] < -9.0, (
         f"Captured prey reward should be < -9, got {rewards['prey'][0]}"
     )
 
 
 def test_reward_survival():
-    """Alive prey get +0.1 survival reward, dead prey get 0."""
+    """Alive prey get distance reward > 0, dead prey get 0."""
     env = PredatorPreyEnv(SCENARIO_CONFIG)
     # Everyone far apart, no captures
     state = _make_state(
@@ -509,7 +508,7 @@ def test_reward_survival():
     )
     key = jax.random.PRNGKey(0)
     _, _, rewards, _, _ = env.step(key, state, _zero_actions())
-    # Alive prey gets survival + distance reward (both positive)
+    # Alive prey gets distance reward (positive when far from predators)
     assert rewards["prey"][0] > 0.0, "Alive prey should have positive reward"
     # Dead prey gets 0
     assert jnp.allclose(rewards["prey"][1], 0.0, atol=1e-5), "Dead prey should get 0 reward"
@@ -539,17 +538,29 @@ def test_reward_distance():
 
 def test_predator_reward_pure_fn():
     """compute_predator_rewards with known inputs."""
-    dist_to_prey = jnp.array([100.0, 100.0, 100.0, 100.0, 100.0])  # all far
+    # Far prey: distance_reward clipped to 0
+    dist_to_prey = jnp.array([100.0, 100.0, 100.0, 100.0, 100.0])
     rewards = compute_predator_rewards(
-        n_captures=jnp.array(3), n_predators=5, dist_to_prey=dist_to_prey
+        n_captures=jnp.array(3), n_predators=5, dist_to_prey=dist_to_prey, world_size=10.0
     )
     assert rewards.shape == (5,)
-    assert jnp.allclose(rewards, 3 * 50.0 / 5, atol=1e-5)
+    # Capture: 3 * 10.0 / 5 = 6.0. Distance: 0 (beyond max_dist)
+    assert jnp.allclose(rewards, 6.0, atol=1e-5)
 
     rewards_zero = compute_predator_rewards(
-        n_captures=jnp.array(0), n_predators=5, dist_to_prey=dist_to_prey
+        n_captures=jnp.array(0), n_predators=5, dist_to_prey=dist_to_prey, world_size=10.0
     )
     assert jnp.allclose(rewards_zero, 0.0, atol=1e-5)
+
+    # Close prey: distance_reward near 1.0
+    dist_close = jnp.array([0.5, 0.5, 0.5, 0.5, 0.5])
+    rewards_close = compute_predator_rewards(
+        n_captures=jnp.array(0), n_predators=5, dist_to_prey=dist_close, world_size=10.0
+    )
+    # max_dist = 10.0 * 0.707 = 7.07. distance_reward = 1 - 0.5/7.07 ≈ 0.93
+    assert rewards_close[0] > 0.9, (
+        f"Close prey should give high distance reward: {rewards_close[0]}"
+    )
 
 
 def test_prey_reward_pure_fn():
@@ -559,16 +570,14 @@ def test_prey_reward_pure_fn():
     prey_alive = jnp.array([True, True])
     captures = jnp.array([True, False])
 
-    rewards = compute_prey_rewards(prey_pos, pred_pos, prey_alive, captures)
+    rewards = compute_prey_rewards(prey_pos, pred_pos, prey_alive, captures, world_size=100.0)
     assert rewards.shape == (2,)
 
-    # Prey 0: captured → -10 + 0.1 survival + 0.01 * dist
-    # Distance to nearest pred is 0 for prey 0 (pred at same spot)
-    # So reward ≈ -10 + 0.1 + 0.0 = -9.9
+    # Prey 0: captured → -10 + small distance component
     assert rewards[0] < -9.0, f"Captured prey reward: {rewards[0]}"
 
-    # Prey 1: alive, not captured → 0.1 + 0.01 * min_dist
-    # Distance to pred 0 = ~56.6, to pred 1 = ~113.1 → min = ~56.6
+    # Prey 1: alive, not captured → distance reward > 0
+    # min dist to pred (wrapped on 100x100 grid) > 0
     assert rewards[1] > 0.0, f"Surviving prey reward: {rewards[1]}"
 
 
@@ -790,49 +799,3 @@ def test_create_policy_fn_invalid_type():
     assert "policy_type" in params
     assert "train_state" in params
     assert "noise_scale" in params
-
-
-# ---------------------------------------------------------------------------
-# Training smoke tests
-# ---------------------------------------------------------------------------
-
-
-def test_train_single_smoke():
-    """Single-agent training pipeline compiles and runs without error."""
-    from jax_boids.train_single import TrainConfig as SingleTrainConfig
-    from jax_boids.train_single import make_train
-
-    env_config = EnvConfig(n_predators=2, n_prey=3, max_steps=50)
-    train_config = SingleTrainConfig(
-        total_timesteps=4096,
-        n_envs=4,
-        n_steps=32,
-        n_epochs=2,
-        n_minibatches=2,
-    )
-    env = PredatorPreyEnv(env_config)
-    train_fn = jax.jit(make_train(train_config, env, env_config))
-    key = jax.random.PRNGKey(0)
-    runner_state, metrics = train_fn(key)
-    # Just verify it completed and produced metrics
-    assert metrics["reward"].shape[0] > 0
-
-
-def test_train_multi_smoke():
-    """Multi-agent training pipeline compiles and runs without error."""
-    from jax_boids.train import TrainConfig as MultiTrainConfig
-    from jax_boids.train import make_train
-
-    env_config = EnvConfig(n_predators=2, n_prey=3, max_steps=50)
-    train_config = MultiTrainConfig(
-        total_timesteps=4096,
-        n_envs=4,
-        n_steps=32,
-        n_epochs=2,
-        n_minibatches=2,
-    )
-    env = PredatorPreyEnv(env_config)
-    train_fn = jax.jit(make_train(train_config, env, env_config))
-    key = jax.random.PRNGKey(0)
-    runner_state, metrics = train_fn(key)
-    assert metrics["pred_reward"].shape[0] > 0

@@ -15,30 +15,30 @@ def compute_predator_rewards(
     n_predators: int,
     dist_to_prey: chex.Array,
     use_distance_reward: bool = True,
+    world_size: float = 10.0,
 ) -> chex.Array:
-    """Compute predator rewards from capture count and distance reduction.
+    """Compute predator rewards from capture count and distance shaping.
 
     Args:
         n_captures: scalar, number of prey captured this step
         n_predators: number of predators
         dist_to_prey: [n_predators] minimum distance to alive prey
         use_distance_reward: if False, only capture reward (no shaping)
+        world_size: world size for distance normalization
 
     Returns:
         [n_predators] reward array
     """
     # Capture reward (shared equally, scaled by number of predators)
-    capture_reward = jnp.full(n_predators, n_captures * 50.0 / n_predators)
+    capture_reward = jnp.full(n_predators, n_captures * 10.0 / n_predators)
 
     if not use_distance_reward:
         return capture_reward
 
-    # Dense shaping: reward for small distances (max reward when touching prey)
-    distance_reward = jnp.where(
-        dist_to_prey < 50.0,
-        (50.0 - dist_to_prey) * 0.05,
-        0.0,
-    )
+    # Dense shaping: normalized inverse distance (0 when far, ~1 when close)
+    # Max wrapped distance on toroidal grid is world_size * sqrt(2) / 2
+    max_dist = world_size * 0.707
+    distance_reward = jnp.clip(1.0 - dist_to_prey / max_dist, 0.0, 1.0)
 
     return capture_reward + distance_reward
 
@@ -50,7 +50,7 @@ def compute_prey_rewards(
     captures: chex.Array,
     world_size: float = 0.0,
 ) -> chex.Array:
-    """Compute prey rewards from survival, capture penalty, and distance.
+    """Compute prey rewards from capture penalty and distance.
 
     Args:
         prey_pos: [n_prey, 2] prey positions
@@ -62,19 +62,17 @@ def compute_prey_rewards(
     Returns:
         [n_prey] reward array
     """
-    # Survival reward
-    survival_reward = jnp.where(prey_alive, 0.1, 0.0)
-
-    # Penalty for being caught
+    # Capture penalty (matches predator capture reward)
     caught_penalty = jnp.where(captures, -10.0, 0.0)
 
-    # Reward for distance from predators (wrapped)
+    # Distance reward: normalized distance to nearest predator (0 when touching, 1 when far)
     if world_size > 0:
         diff = wrapped_diff(prey_pos[:, None, :], pred_pos[None, :, :], world_size)
     else:
         diff = prey_pos[:, None, :] - pred_pos[None, :, :]
     prey_to_pred_dist = jnp.linalg.norm(diff, axis=-1)  # [n_prey, n_pred]
     min_dist_to_pred = jnp.min(prey_to_pred_dist, axis=1)  # [n_prey]
-    distance_reward = jnp.where(prey_alive, 0.01 * min_dist_to_pred, 0.0)
+    max_dist = max(world_size, 1.0) * 0.707
+    distance_reward = jnp.where(prey_alive, jnp.clip(min_dist_to_pred / max_dist, 0.0, 1.0), 0.0)
 
-    return survival_reward + caught_penalty + distance_reward
+    return caught_penalty + distance_reward
