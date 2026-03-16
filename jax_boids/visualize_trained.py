@@ -36,15 +36,15 @@ def load_checkpoint(run_dir: str):
     # Find the actual checkpoint directory (may be in a timestamped subdirectory)
     config_path = run_path / "config.json"
 
-    # Check for timestamped subdirectory (e.g. ippo_*, pred_*, prey_*)
+    # Check for timestamped subdirectory (e.g. ippo_*, pred_*, predator_*, prey_*)
     subdirs = [
         d
         for d in run_path.iterdir()
-        if d.is_dir() and d.name.startswith(("ippo_", "pred_", "prey_"))
+        if d.is_dir() and d.name.startswith(("ippo_", "pred_", "predator_", "prey_"))
     ]
     if subdirs:
-        # Use the most recent subdirectory
-        subdir = sorted(subdirs)[-1]
+        # Use the most recently modified subdirectory
+        subdir = max(subdirs, key=lambda d: d.stat().st_mtime)
         config_path = subdir / "config.json"
         checkpoint_base = subdir
     else:
@@ -54,7 +54,12 @@ def load_checkpoint(run_dir: str):
     with open(config_path) as f:
         configs = json.load(f)
 
-    env_config = EnvConfig(**configs["env"])
+    # Filter to only known EnvConfig fields (saved configs may have extra fields)
+    import dataclasses
+
+    known_fields = {f.name for f in dataclasses.fields(EnvConfig)}
+    env_kwargs = {k: v for k, v in configs["env"].items() if k in known_fields}
+    env_config = EnvConfig(**env_kwargs)
     is_ippo = configs.get("mode") == "ippo"
     learner = configs.get("learner", "predator")
 
