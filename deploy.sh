@@ -71,7 +71,7 @@ echo "Running '$SCRIPT $ARGS' on $REMOTE..."
 # Run training in foreground, stream output
 # XLA_PYTHON_CLIENT_PREALLOCATE=false: don't grab all GPU memory upfront
 # XLA_PYTHON_CLIENT_MEM_FRACTION=0.10: limit to 10% of GPU (~2.5GB on 24GB)
-ssh -o LogLevel=ERROR "$REMOTE" "bash -c 'cd $REMOTE_DIR && export PYTHONPATH=. && export XLA_PYTHON_CLIENT_PREALLOCATE=false && export XLA_PYTHON_CLIENT_MEM_FRACTION=0.10 && python $SCRIPT $ARGS 2>&1 | tee $LOG_FILE'" 2>/dev/null
+ssh -o LogLevel=ERROR "$REMOTE" "bash -c 'cd $REMOTE_DIR && export PYTHONPATH=. && export XLA_PYTHON_CLIENT_PREALLOCATE=false && python $SCRIPT $ARGS 2>&1 | tee $LOG_FILE'" 2>/dev/null
 EXIT_CODE=${PIPESTATUS[0]}
 
 echo ""

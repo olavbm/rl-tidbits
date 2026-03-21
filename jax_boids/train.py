@@ -168,6 +168,36 @@ Examples:
         help="Max acceleration from actions (default: 0.5)",
     )
     parser.add_argument(
+        "--k-nearest-same",
+        type=int,
+        default=4,
+        help="Observe k nearest same-team agents (default: 4)",
+    )
+    parser.add_argument(
+        "--k-nearest-enemy",
+        type=int,
+        default=3,
+        help="Observe k nearest enemy agents (default: 3)",
+    )
+    parser.add_argument(
+        "--perception-radius",
+        type=float,
+        default=15.0,
+        help="Boids perception radius (default: 15.0)",
+    )
+    parser.add_argument(
+        "--dt",
+        type=float,
+        default=0.1,
+        help="Physics timestep (default: 0.1)",
+    )
+    parser.add_argument(
+        "--max-speed",
+        type=float,
+        default=1.0,
+        help="Base max speed (default: 1.0)",
+    )
+    parser.add_argument(
         "--learner",
         type=str,
         default="predator",
@@ -450,6 +480,11 @@ def get_env_config(args: argparse.Namespace) -> EnvConfig:
         prey_speed_mult=getattr(args, "prey_speed_mult", 0.5),
         capture_radius=getattr(args, "capture_radius", 0.3),
         max_acceleration=getattr(args, "max_acceleration", 0.5),
+        k_nearest_same=getattr(args, "k_nearest_same", 4),
+        k_nearest_enemy=getattr(args, "k_nearest_enemy", 3),
+        perception_radius=getattr(args, "perception_radius", 15.0),
+        dt=getattr(args, "dt", 0.1),
+        max_speed=getattr(args, "max_speed", 1.0),
     )
 
 

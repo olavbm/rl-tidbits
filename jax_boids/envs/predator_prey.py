@@ -293,9 +293,13 @@ class PredatorPreyEnv:
         enemy_rel_vel = enemy_rel_vel / cfg.max_speed
         my_vel_norm = my_vel / cfg.max_speed
 
+        # Agent index normalized to [0, 1] — lets shared-weight agents differentiate
+        agent_id = jnp.where(n_same_team > 1, agent_idx / (n_same_team - 1), 0.0)
+
         return jnp.concatenate(
             [
                 my_vel_norm,
+                jnp.array([agent_id]),
                 same_rel_pos.flatten(),
                 same_rel_vel.flatten(),
                 enemy_rel_pos.flatten(),

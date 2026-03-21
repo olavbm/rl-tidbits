@@ -115,6 +115,7 @@ def obs_size(config: EnvConfig) -> int:
     """Calculate total observation vector size."""
     return (
         2  # own velocity
+        + 1  # agent index (normalized)
         + config.k_nearest_same * 2  # same team relative positions
         + config.k_nearest_same * 2  # same team relative velocities
         + config.k_nearest_enemy * 2  # enemy relative positions
