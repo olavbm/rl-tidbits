@@ -13,3 +13,4 @@ wheels/
 runs/
 tuning/
 *.gif
+!media/*.gif
