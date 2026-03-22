@@ -121,11 +121,11 @@ def test_dead_prey_not_in_obs():
     obs = env.get_obs(state)
     pred_obs = obs["predator"][0]
 
-    # obs: [my_vel(2), same_rel_pos(0*2), same_rel_vel(0*2),
+    # obs: [my_vel(2), my_pos(2), agent_id(1), same_rel_pos(0*2), same_rel_vel(0*2),
     #       enemy_rel_pos(2*2), enemy_rel_vel(2*2)]
     # With k_nearest_same=0: no same-team obs
-    # enemy_rel_pos starts at index 2
-    enemy_rel_pos = pred_obs[2:6].reshape(2, 2)  # 2 enemies, 2D each
+    # enemy_rel_pos starts at index 5 (vel=2, pos=2, agent_id=1)
+    enemy_rel_pos = pred_obs[5:9].reshape(2, 2)  # 2 enemies, 2D each
 
     # First enemy should be alive prey (at 55,50), second should be zeros (dead)
     half_world = cfg.world_size / 2.0
@@ -159,11 +159,11 @@ def test_obs_wrapping():
     obs = env.get_obs(state)
     pred_obs = obs["predator"][0]
 
-    # enemy_rel_pos starts at index 2 (after my_vel)
+    # enemy_rel_pos starts at index 5 (after vel=2, pos=2, agent_id=1)
     half_world = cfg.world_size / 2.0
     expected_x = 2.0 / half_world  # wrapped distance
     # The x component should be small and positive (prey is 2 units ahead via wrapping)
-    enemy_rel_x = pred_obs[2]
+    enemy_rel_x = pred_obs[5]
     assert jnp.allclose(enemy_rel_x, expected_x, atol=1e-4), (
         f"Expected wrapped rel_x={expected_x}, got {enemy_rel_x}"
     )

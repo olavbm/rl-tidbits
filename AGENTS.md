@@ -15,10 +15,13 @@ Reduce prey_alive to <1.5 with two-sided IPPO (both predators and prey learn, no
 ### Status
 
 - **Large-scale IPPO**: 5 predators vs 100 prey, 50x50 world, 1000 steps/episode
-  - With agent index: prey_alive=36.5 at 50M steps (64 of 100 prey caught)
+  - 50M steps (LR=0.0013, 8 epochs): prey_alive=33.2 — best result so far
+  - 100M steps: prey_alive=44.2 — arms race regression, prey learned better evasion
+  - With agent index @ default LR: prey_alive=36.5 at 50M steps
   - Without agent index: prey_alive=46.0 at 50M steps
 - **Small-scale IPPO** (2v5, 10x10): `best_pred2` config, prey_alive=2.37 at 5M steps
 - Agent index in observations resolved predator clumping from shared weights
+- Dead prey freeze in place (velocity zeroed) and disappear from visualization
 
 ### Environment
 
@@ -27,7 +30,7 @@ Reduce prey_alive to <1.5 with two-sided IPPO (both predators and prey learn, no
 - Predators share network weights (parameter sharing)
 - Each agent gets a normalized index in its observation for differentiation
 - Physics: max_speed=1.0, max_acceleration=0.5, velocity_damping=0.9
-- Observation: own velocity + agent index + k-nearest relative positions/velocities
+- Observation: own velocity + own position + agent index + k-nearest relative positions/velocities
 
 ### Key Files
 
@@ -36,7 +39,7 @@ Reduce prey_alive to <1.5 with two-sided IPPO (both predators and prey learn, no
 - `jax_boids/train_ippo.py` - Multi-agent IPPO training (both sides learn)
 - `jax_boids/collector.py` - Rollout collection (separates env interaction from training)
 - `jax_boids/ppo.py` - Core PPO implementation
-- `jax_boids/networks.py` - Actor-critic network (64×64 MLP)
+- `jax_boids/networks.py` - Actor-critic network (configurable MLP, 64×64×64 for predators, 64×64 for prey)
 - `jax_boids/envs/types.py` - `TrainConfig`, `EnvConfig`, `BoidsState`
 - `jax_boids/envs/predator_prey.py` - Environment logic, observations, rewards
 - `jax_boids/configs.py` - Named config database
@@ -53,13 +56,16 @@ Reduce prey_alive to <1.5 with two-sided IPPO (both predators and prey learn, no
 
 ### Next Steps (prioritized)
 
-1. **Richer observations** — Add normalized own position so agents can learn spatial strategies (e.g. territory assignment).
+1. **Anti-stacking reward shaping** — Small bonus proportional to inter-predator distance. Directly incentivizes spreading out, complementing agent index.
 
-2. **Anti-stacking reward shaping** — Small bonus proportional to inter-predator distance. Directly incentivizes spreading out, complementing agent index.
+2. **Train and evaluate** — Run large-scale training with new observations (own position) and 3-layer predator network to see if spatial awareness + capacity helps.
 
-3. **Larger network** — Current 64×64 MLP may lack capacity for large-scale (5v100) coordination. Try 128×128 or add a third layer.
+### Future Work
 
-4. **More training** — Large-scale runs may benefit from 100M+ steps to fully converge.
+- **Asymmetric learning rates** — Higher LR for predators than prey to offset arms race. Coordination (5 predators) is harder than individual evasion.
+- **Freeze-thaw training** — Periodically freeze prey policy while predators catch up.
+- **Attention-based observations** — Replace k-nearest with attention over all visible agents.
+- **MAPPO** — Centralized value function for predators (shared global state in critic).
 
 ## Deployment
 

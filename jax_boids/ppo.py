@@ -3,7 +3,10 @@
 Contains core PPO components used by both multi-agent and single-agent training.
 """
 
+import logging
 from typing import Callable, Dict, NamedTuple
+
+logger = logging.getLogger(__name__)
 
 import chex
 import distrax
@@ -61,6 +64,7 @@ def create_train_state(
     total_updates: int | None = None,
     orthogonal_init: bool = False,
     min_lr: float = 0.0,
+    hidden_dims: tuple[int, ...] = (64, 64),
 ) -> TrainState:
     """Initialize network and optimizer.
 
@@ -68,8 +72,9 @@ def create_train_state(
         total_updates: If set, linearly anneal LR over this many updates.
         orthogonal_init: Use orthogonal weight initialization.
         min_lr: Minimum learning rate for annealing (default 0.0).
+        hidden_dims: Hidden layer sizes (default (64, 64)).
     """
-    network = ActorCritic(action_dim=action_size, orthogonal_init=orthogonal_init)
+    network = ActorCritic(action_dim=action_size, hidden_dims=hidden_dims, orthogonal_init=orthogonal_init)
     dummy_obs = jnp.zeros((obs_size,))
     params = network.init(key, dummy_obs)
 

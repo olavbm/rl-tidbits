@@ -5,7 +5,10 @@ to invert: prey learn, predators move randomly.
 """
 
 import json
+import logging
 from typing import Dict, NamedTuple
+
+logger = logging.getLogger(__name__)
 
 import chex
 import jax
@@ -257,15 +260,15 @@ def train(
             )
 
     if verbose:
-        print(f"Single-agent training: {learner} learns, {opponent} {opp_mode}")
+        logger.info("Single-agent training: %s learns, %s %s", learner, opponent, opp_mode)
         if opponent_checkpoint:
-            print(f"  Opponent checkpoint: {opponent_checkpoint}")
-        print(f"Training for {config.total_timesteps:,} steps ({n_updates} updates)")
+            logger.info("  Opponent checkpoint: %s", opponent_checkpoint)
+        logger.info("Training for %s steps (%d updates)", f"{config.total_timesteps:,}", n_updates)
         if writer is not None:
-            print(f"Logging to {writer.logdir}")
-        print("Compiling training function...")
+            logger.info("Logging to %s", writer.logdir)
+        logger.info("Compiling training function...")
     else:
-        print(f"Starting training: {config.total_timesteps:,} steps ({n_updates} updates)")
+        logger.info("Starting training: %s steps (%d updates)", f"{config.total_timesteps:,}", n_updates)
 
     # Init outside JIT so orthogonal_init/lr_anneal don't trigger recompilation
     key = jax.random.PRNGKey(seed)
@@ -299,7 +302,7 @@ def train(
         loaded_params = checkpointer.restore(ckpt_path)
         opp_state = opp_state.replace(params=loaded_params)
         if verbose:
-            print(f"Loaded frozen {opponent} checkpoint")
+            logger.info("Loaded frozen %s checkpoint", opponent)
 
     env_keys = jax.random.split(k2, config.n_envs)
     obs, env_states = jax.vmap(env.reset)(env_keys)
@@ -343,15 +346,15 @@ def train(
         checkpoint_dir = (run_dir / "checkpoint").resolve()
         checkpointer.save(str(checkpoint_dir), runner_state.learner_state.params, force=True)
         if verbose:
-            print(f"Saved final checkpoint to {checkpoint_dir}")
+            logger.info("Saved final checkpoint to %s", checkpoint_dir)
 
     if writer is not None:
         writer.close()
 
     if verbose:
-        print("Training complete!")
-        print(f"  Final policy_loss: {metrics['policy_loss'][-1]:.4f}")
-        print(f"  Final prey_alive: {metrics['prey_alive'][-1]:.1f}")
+        logger.info("Training complete!")
+        logger.info("  Final policy_loss: %.4f", metrics['policy_loss'][-1])
+        logger.info("  Final prey_alive: %.1f", metrics['prey_alive'][-1])
 
     return runner_state, metrics
 

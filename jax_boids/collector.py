@@ -3,9 +3,12 @@
 Separates environment interaction from training logic.
 """
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Dict
+
+logger = logging.getLogger(__name__)
 
 import chex
 import jax

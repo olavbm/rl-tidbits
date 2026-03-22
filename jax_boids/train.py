@@ -9,12 +9,15 @@ Modes:
 
 import argparse
 import json
+import logging
 import random
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from jax_boids.configs import CONFIGS, Config, get_config
+
+logger = logging.getLogger(__name__)
 from jax_boids.envs.types import EnvConfig, TrainConfig
 from jax_boids.train_ippo import train as train_ippo
 from jax_boids.train_single import train as train_single
@@ -241,6 +244,7 @@ Examples:
     parser.add_argument("--output", type=str, help="Output directory")
     parser.add_argument("--verbose", action="store_true", help="Print progress")
     parser.add_argument("--log-interval", type=int, default=50, help="Logging frequency")
+    parser.add_argument("--debug", action="store_true", help="Enable DEBUG-level logging")
 
     return parser.parse_args()
 
@@ -602,13 +606,13 @@ def mode_train(args: argparse.Namespace) -> None:
             print("Error: --mode train accepts only one config. Use --mode validate for multiple.")
             return
         config = get_config(args.config[0])
-        print(f"Training with config: {args.config[0]}")
-        print(f"  lr={config.lr:.2e} clip={config.clip_eps:.3f} ent={config.ent_coef:.3f}")
-        print(f"  n_steps={config.n_steps} n_epochs={config.n_epochs}")
+        logger.info("Training with config: %s", args.config[0])
+        logger.info("  lr=%.2e clip=%.3f ent=%.3f", config.lr, config.clip_eps, config.ent_coef)
+        logger.info("  n_steps=%d n_epochs=%d", config.n_steps, config.n_epochs)
         train_config = config_to_train_config(config, args)
     else:
         # Build config entirely from CLI args (inline hyperparams)
-        print("Training with inline hyperparams")
+        logger.info("Training with inline hyperparams")
 
         # Resolve boolean flags
         orthogonal_init = args.orthogonal_init and not args.no_orthogonal_init
@@ -640,17 +644,17 @@ def mode_train(args: argparse.Namespace) -> None:
             prey_max_grad_norm=getattr(args, "prey_max_grad_norm", None),
         )
         lr, clip, ent = train_config.lr, train_config.clip_eps, train_config.ent_coef
-        print(f"  lr={lr:.2e} clip={clip:.3f} ent={ent:.3f}")
-        print(f"  n_steps={train_config.n_steps} n_epochs={train_config.n_epochs}")
+        logger.info("  lr=%.2e clip=%.3f ent=%.3f", lr, clip, ent)
+        logger.info("  n_steps=%d n_epochs=%d", train_config.n_steps, train_config.n_epochs)
     env_config = get_env_config(args)
     ippo = getattr(args, "prey_learn", False)
     learner = getattr(args, "learner", "predator")
     opponent_ckpt = getattr(args, "opponent_checkpoint", None)
     if ippo:
-        print("  IPPO: both sides learn")
+        logger.info("  IPPO: both sides learn")
     elif learner == "prey":
         opp_mode = f"frozen ({opponent_ckpt})" if opponent_ckpt else "random"
-        print(f"  Single-agent: prey learns, predators {opp_mode}")
+        logger.info("  Single-agent: prey learns, predators %s", opp_mode)
 
     run_training(
         train_config,
@@ -665,7 +669,7 @@ def mode_train(args: argparse.Namespace) -> None:
         opponent_checkpoint=opponent_ckpt,
     )
 
-    print(f"\nTraining complete! Output: {output_dir}")
+    logger.info("Training complete! Output: %s", output_dir)
 
 
 def mode_sweep(args: argparse.Namespace) -> None:
@@ -678,7 +682,7 @@ def mode_sweep(args: argparse.Namespace) -> None:
     if args.sweep_range:
         with open(args.sweep_range) as f:
             sweep_ranges = json.load(f)
-        print(f"Using custom sweep ranges from {args.sweep_range}")
+        logger.info("Using custom sweep ranges from %s", args.sweep_range)
 
     # Generate configs
     random.seed(args.seed)
@@ -693,21 +697,22 @@ def mode_sweep(args: argparse.Namespace) -> None:
         with open(results_path) as f:
             existing_results = json.load(f)
         existing_names = {r["name"] for r in existing_results}
-        print(f"Found {len(existing_results)} existing results")
+        logger.info("Found %d existing results", len(existing_results))
 
     # Filter to only run configs not yet completed
     configs_to_run = {name: cfg for name, cfg in configs.items() if name not in existing_names}
-    print(f"Running {len(configs_to_run)} new configs out of {len(configs)} total\n")
+    logger.info("Running %d new configs out of %d total", len(configs_to_run), len(configs))
 
     # Run each config
     new_results = []
     for name, config in configs_to_run.items():
-        print(f"\n{'=' * 60}")
-        print(f"Running config: {name}")
-        print(f"{'=' * 60}")
-        print(f"  lr={config.lr:.2e}, clip={config.clip_eps:.2f}, ent={config.ent_coef:.3f}")
-        print(
-            f"  n_steps={config.n_steps}, n_epochs={config.n_epochs}, vf_coef={config.vf_coef:.2f}"
+        logger.info("=" * 60)
+        logger.info("Running config: %s", name)
+        logger.info("=" * 60)
+        logger.info("  lr=%.2e, clip=%.2f, ent=%.3f", config.lr, config.clip_eps, config.ent_coef)
+        logger.info(
+            "  n_steps=%d, n_epochs=%d, vf_coef=%.2f",
+            config.n_steps, config.n_epochs, config.vf_coef,
         )
 
         run_dir = output_dir / name
@@ -742,7 +747,7 @@ def mode_sweep(args: argparse.Namespace) -> None:
         }
         new_results.append(result)
 
-        print(f"\n  {name} final prey_alive: {final_metrics['prey_alive']:.2f}, KL: {kl:.4f}")
+        logger.info("  %s final prey_alive: %.2f, KL: %.4f", name, final_metrics['prey_alive'], kl)
 
     # Combine with existing results
     all_results = existing_results + new_results
@@ -775,21 +780,22 @@ def mode_sweep(args: argparse.Namespace) -> None:
     with open(results_path, "w") as f:
         json.dump(all_results, f, indent=2)
 
-    print("\n" + "=" * 60)
-    print("TOP 50 RESULTS (sorted by prey_alive)")
-    print("=" * 60)
-    print(
-        f"{'Rank':<6}{'Name':<12}{'Prey':<8}{'KL':<10}{'LR':<12}{'Clip':<8}{'Ent':<8}{'n_steps':<8}{'n_epochs':<6}"
+    logger.info("=" * 60)
+    logger.info("TOP 50 RESULTS (sorted by prey_alive)")
+    logger.info("=" * 60)
+    logger.info(
+        "%-6s%-12s%-8s%-10s%-12s%-8s%-8s%-8s%-6s",
+        "Rank", "Name", "Prey", "KL", "LR", "Clip", "Ent", "n_steps", "n_epochs",
     )
-    print("-" * 80)
+    logger.info("-" * 80)
     for rank, r in enumerate(all_results[:50], 1):
-        print(
-            f"{rank:<6}{r['name']:<12}{r['prey_alive']:<8.2f}"
-            f"{r['kl']:<10.4f}{r['lr']:<12.2e}{r['clip']:<8.2f}"
-            f"{r['ent']:<8.3f}{r['n_steps']:<8}{r['n_epochs']:<6}"
+        logger.info(
+            "%-6d%-12s%-8.2f%-10.4f%-12.2e%-8.2f%-8.3f%-8d%-6d",
+            rank, r['name'], r['prey_alive'], r['kl'], r['lr'],
+            r['clip'], r['ent'], r['n_steps'], r['n_epochs'],
         )
 
-    print(f"\nResults saved to {results_path}")
+    logger.info("Results saved to %s", results_path)
 
 
 def mode_sweep_fine(args: argparse.Namespace) -> None:
@@ -803,12 +809,12 @@ def mode_sweep_fine(args: argparse.Namespace) -> None:
         return
 
     base_config = get_config(args.base_config)
-    print(f"Fine-tuning around config: {args.base_config}")
-    print(
-        f"  lr={base_config.lr:.2e} clip={base_config.clip_eps:.3f} ent={base_config.ent_coef:.3f}"
+    logger.info("Fine-tuning around config: %s", args.base_config)
+    logger.info(
+        "  lr=%.2e clip=%.3f ent=%.3f", base_config.lr, base_config.clip_eps, base_config.ent_coef,
     )
-    print(f"  n_steps={base_config.n_steps} n_epochs={base_config.n_epochs}")
-    print(f"  Perturb factor: {args.perturb_factor * 100:.0f}%\n")
+    logger.info("  n_steps=%d n_epochs=%d", base_config.n_steps, base_config.n_epochs)
+    logger.info("  Perturb factor: %.0f%%", args.perturb_factor * 100)
 
     # Generate fine-tuning configs
     random.seed(args.seed)
@@ -852,21 +858,22 @@ def mode_sweep_fine(args: argparse.Namespace) -> None:
         with open(results_path) as f:
             existing_results = json.load(f)
         existing_names = {r["name"] for r in existing_results}
-        print(f"Found {len(existing_results)} existing results")
+        logger.info("Found %d existing results", len(existing_results))
 
     # Filter to only run configs not yet completed
     configs_to_run = {name: cfg for name, cfg in configs.items() if name not in existing_names}
-    print(f"Running {len(configs_to_run)} new configs out of {len(configs)} total\n")
+    logger.info("Running %d new configs out of %d total", len(configs_to_run), len(configs))
 
     # Run each config
     new_results = []
     for name, config in configs_to_run.items():
-        print(f"\n{'=' * 60}")
-        print(f"Running config: {name}")
-        print(f"{'=' * 60}")
-        print(f"  lr={config.lr:.2e}, clip={config.clip_eps:.2f}, ent={config.ent_coef:.3f}")
-        print(
-            f"  n_steps={config.n_steps}, n_epochs={config.n_epochs}, vf_coef={config.vf_coef:.2f}"
+        logger.info("=" * 60)
+        logger.info("Running config: %s", name)
+        logger.info("=" * 60)
+        logger.info("  lr=%.2e, clip=%.2f, ent=%.3f", config.lr, config.clip_eps, config.ent_coef)
+        logger.info(
+            "  n_steps=%d, n_epochs=%d, vf_coef=%.2f",
+            config.n_steps, config.n_epochs, config.vf_coef,
         )
 
         run_dir = output_dir / name
@@ -900,7 +907,7 @@ def mode_sweep_fine(args: argparse.Namespace) -> None:
         }
         new_results.append(result)
 
-        print(f"\n  {name} final prey_alive: {final_metrics['prey_alive']:.2f}, KL: {kl:.4f}")
+        logger.info("  %s final prey_alive: %.2f, KL: %.4f", name, final_metrics['prey_alive'], kl)
 
     # Combine with existing results
     all_results = existing_results + new_results
@@ -933,21 +940,22 @@ def mode_sweep_fine(args: argparse.Namespace) -> None:
     with open(results_path, "w") as f:
         json.dump(all_results, f, indent=2)
 
-    print("\n" + "=" * 60)
-    print("TOP 50 RESULTS (sorted by prey_alive)")
-    print("=" * 60)
-    print(
-        f"{'Rank':<6}{'Name':<12}{'Prey':<8}{'KL':<10}{'LR':<12}{'Clip':<8}{'Ent':<8}{'n_steps':<8}{'n_epochs':<6}"
+    logger.info("=" * 60)
+    logger.info("TOP 50 RESULTS (sorted by prey_alive)")
+    logger.info("=" * 60)
+    logger.info(
+        "%-6s%-12s%-8s%-10s%-12s%-8s%-8s%-8s%-6s",
+        "Rank", "Name", "Prey", "KL", "LR", "Clip", "Ent", "n_steps", "n_epochs",
     )
-    print("-" * 80)
+    logger.info("-" * 80)
     for rank, r in enumerate(all_results[:50], 1):
-        print(
-            f"{rank:<6}{r['name']:<12}{r['prey_alive']:<8.2f}"
-            f"{r['kl']:<10.4f}{r['lr']:<12.2e}{r['clip']:<8.2f}"
-            f"{r['ent']:<8.3f}{r['n_steps']:<8}{r['n_epochs']:<6}"
+        logger.info(
+            "%-6d%-12s%-8.2f%-10.4f%-12.2e%-8.2f%-8.3f%-8d%-6d",
+            rank, r['name'], r['prey_alive'], r['kl'], r['lr'],
+            r['clip'], r['ent'], r['n_steps'], r['n_epochs'],
         )
 
-    print(f"\nResults saved to {results_path}")
+    logger.info("Results saved to %s", results_path)
 
 
 def mode_validate(args: argparse.Namespace) -> None:
@@ -963,10 +971,10 @@ def mode_validate(args: argparse.Namespace) -> None:
             if config_name in CONFIGS:
                 configs_to_validate.append(("named", config_name, None))
                 cfg = CONFIGS[config_name]
-                print(f"Validating named config: {config_name}")
-                print(f"  lr={cfg.lr:.2e} clip={cfg.clip_eps:.3f} ent={cfg.ent_coef:.3f}")
+                logger.info("Validating named config: %s", config_name)
+                logger.info("  lr=%.2e clip=%.3f ent=%.3f", cfg.lr, cfg.clip_eps, cfg.ent_coef)
             else:
-                print(f"Warning: Unknown config '{config_name}'. Skipping.")
+                logger.warning("Unknown config '%s'. Skipping.", config_name)
 
     if args.from_results:
         with open(args.from_results) as f:
@@ -974,7 +982,7 @@ def mode_validate(args: argparse.Namespace) -> None:
         top_configs = results[: args.top]
         for cfg in top_configs:
             configs_to_validate.append(("sweep", cfg["name"], cfg))
-        print(f"\nValidating top {len(top_configs)} configs from {args.from_results}")
+        logger.info("Validating top %d configs from %s", len(top_configs), args.from_results)
 
     if not configs_to_validate:
         print("Error: Must specify --config or --from-results")
@@ -986,9 +994,9 @@ def mode_validate(args: argparse.Namespace) -> None:
     else:
         seeds = list(range(123, 123 + args.n_seeds))
 
-    print(f"\nSeeds: {seeds}")
+    logger.info("Seeds: %s", seeds)
     total_runs = len(configs_to_validate) * len(seeds)
-    print(f"Total runs: {len(configs_to_validate)} configs × {len(seeds)} seeds = {total_runs}")
+    logger.info("Total runs: %d configs x %d seeds = %d", len(configs_to_validate), len(seeds), total_runs)
 
     # Save which configs we're validating
     validation_config = []
@@ -1030,9 +1038,9 @@ def mode_validate(args: argparse.Namespace) -> None:
             run_name = f"{config_name}_seed{seed}"
             run_dir = output_dir / run_name
 
-            print(f"\n{'=' * 60}")
-            print(f"Validating {run_name}")
-            print(f"{'=' * 60}")
+            logger.info("=" * 60)
+            logger.info("Validating %s", run_name)
+            logger.info("=" * 60)
 
             train_config = config_to_train_config(config, args, total_timesteps=default_timesteps)
             env_config = get_env_config(args)
@@ -1058,7 +1066,7 @@ def mode_validate(args: argparse.Namespace) -> None:
             }
             all_results.append(result)
 
-            print(f"  {run_name} final prey_alive: {final_metrics['prey_alive']:.2f}")
+            logger.info("  %s final prey_alive: %.2f", run_name, final_metrics['prey_alive'])
 
     # Aggregate results by config
     aggregated = {}
@@ -1082,19 +1090,23 @@ def mode_validate(args: argparse.Namespace) -> None:
     with open(output_dir / "results.json", "w") as f:
         json.dump(aggregated_list, f, indent=2)
 
-    print("\n" + "=" * 60)
-    print("VALIDATION RESULTS (sorted by mean prey_alive)")
-    print("=" * 60)
-    print(f"{'Config':<20}{'Mean':<12}{'Std':<12}{'Seeds':<10}")
-    print("-" * 60)
+    logger.info("=" * 60)
+    logger.info("VALIDATION RESULTS (sorted by mean prey_alive)")
+    logger.info("=" * 60)
+    logger.info("%-20s%-12s%-12s%-10s", "Config", "Mean", "Std", "Seeds")
+    logger.info("-" * 60)
     for r in aggregated_list:
-        print(f"{r['name']:<20}{r['mean']:<12.3f}{r['std']:<12.3f}{len(r['seeds']):<10}")
+        logger.info("%-20s%-12.3f%-12.3f%-10d", r['name'], r['mean'], r['std'], len(r['seeds']))
 
-    print(f"\nResults saved to {output_dir / 'results.json'}")
+    logger.info("Results saved to %s", output_dir / 'results.json')
 
 
 def main():
     args = parse_args()
+
+    # Configure logging
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(format="%(levelname)s %(message)s", level=log_level)
 
     # Set random seed for reproducibility
     random.seed(args.seed)

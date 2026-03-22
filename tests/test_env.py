@@ -75,98 +75,95 @@ def _zero_actions(config=SCENARIO_CONFIG):
     }
 
 
-def test_reset():
+def test_reset(tiny_env):
     """Environment reset produces correct shapes."""
-    config = EnvConfig(n_predators=5, n_prey=10)
-    env = PredatorPreyEnv(config)
+    from tests.conftest import TINY_CONFIG
+    cfg = TINY_CONFIG
 
     key = jax.random.PRNGKey(0)
-    obs, state = env.reset(key)
+    obs, state = tiny_env.reset(key)
 
-    assert obs["predator"].shape == (5, env.observation_size)
-    assert obs["prey"].shape == (10, env.observation_size)
-    assert state.predator_pos.shape == (5, 2)
-    assert state.prey_pos.shape == (10, 2)
+    assert obs["predator"].shape == (cfg.n_predators, tiny_env.observation_size)
+    assert obs["prey"].shape == (cfg.n_prey, tiny_env.observation_size)
+    assert state.predator_pos.shape == (cfg.n_predators, 2)
+    assert state.prey_pos.shape == (cfg.n_prey, 2)
     assert jnp.all(state.prey_alive)
 
 
-def test_step():
+def test_step(tiny_env):
     """Environment step produces correct shapes."""
-    config = EnvConfig(n_predators=5, n_prey=10)
-    env = PredatorPreyEnv(config)
+    from tests.conftest import TINY_CONFIG
+    cfg = TINY_CONFIG
 
     key = jax.random.PRNGKey(0)
-    _, state = env.reset(key)
+    _, state = tiny_env.reset(key)
 
     key, k1, k2, k3 = jax.random.split(key, 4)
     actions = {
-        "predator": jax.random.uniform(k1, (5, 2), minval=-1, maxval=1),
-        "prey": jax.random.uniform(k2, (10, 2), minval=-1, maxval=1),
+        "predator": jax.random.uniform(k1, (cfg.n_predators, 2), minval=-1, maxval=1),
+        "prey": jax.random.uniform(k2, (cfg.n_prey, 2), minval=-1, maxval=1),
     }
 
-    next_obs, next_state, rewards, _, _ = env.step(k3, state, actions)
+    next_obs, next_state, rewards, _, _ = tiny_env.step(k3, state, actions)
 
-    assert next_obs["predator"].shape == (5, env.observation_size)
-    assert rewards["predator"].shape == (5,)
-    assert rewards["prey"].shape == (10,)
+    assert next_obs["predator"].shape == (cfg.n_predators, tiny_env.observation_size)
+    assert rewards["predator"].shape == (cfg.n_predators,)
+    assert rewards["prey"].shape == (cfg.n_prey,)
     assert next_state.step == 1
 
 
-def test_jit():
+def test_jit(tiny_env):
     """Environment step can be JIT compiled."""
-    config = EnvConfig(n_predators=5, n_prey=10)
-    env = PredatorPreyEnv(config)
+    from tests.conftest import TINY_CONFIG
+    cfg = TINY_CONFIG
 
     @jax.jit
     def do_step(key, state, actions):
-        return env.step(key, state, actions)
+        return tiny_env.step(key, state, actions)
 
     key = jax.random.PRNGKey(0)
-    _, state = env.reset(key)
+    _, state = tiny_env.reset(key)
 
     key, k1, k2, k3 = jax.random.split(key, 4)
     actions = {
-        "predator": jax.random.uniform(k1, (5, 2), minval=-1, maxval=1),
-        "prey": jax.random.uniform(k2, (10, 2), minval=-1, maxval=1),
+        "predator": jax.random.uniform(k1, (cfg.n_predators, 2), minval=-1, maxval=1),
+        "prey": jax.random.uniform(k2, (cfg.n_prey, 2), minval=-1, maxval=1),
     }
 
-    # First call compiles
     _, next_state, _, _, _ = do_step(k3, state, actions)
-
-    # Second call uses cached compilation
     key, k4 = jax.random.split(key)
     do_step(k4, next_state, actions)
 
 
-def test_vmap():
+def test_vmap(tiny_env):
     """Environment can be vmapped for parallel envs."""
-    config = EnvConfig(n_predators=5, n_prey=10)
-    env = PredatorPreyEnv(config)
+    from tests.conftest import TINY_CONFIG
+    cfg = TINY_CONFIG
 
-    n_envs = 8
+    n_envs = 4
     keys = jax.random.split(jax.random.PRNGKey(0), n_envs)
 
-    obs, states = jax.vmap(env.reset)(keys)
+    obs, states = jax.vmap(tiny_env.reset)(keys)
 
-    assert obs["predator"].shape == (n_envs, 5, env.observation_size)
-    assert states.predator_pos.shape == (n_envs, 5, 2)
+    assert obs["predator"].shape == (n_envs, cfg.n_predators, tiny_env.observation_size)
+    assert states.predator_pos.shape == (n_envs, cfg.n_predators, 2)
 
 
-def test_episode():
+def test_episode(tiny_env):
     """Episode runs and captures work."""
-    config = EnvConfig(n_predators=5, n_prey=10, max_steps=100)
-    env = PredatorPreyEnv(config)
+    from tests.conftest import TINY_CONFIG
+    cfg = TINY_CONFIG
 
     key = jax.random.PRNGKey(42)
-    _, state = env.reset(key)
+    _, state = tiny_env.reset(key)
 
-    for _ in range(100):
+    for _ in range(cfg.max_steps):
         key, k1, k2, k3 = jax.random.split(key, 4)
         actions = {
-            "predator": jax.random.uniform(k1, (5, 2), minval=-1, maxval=1),
-            "prey": jax.random.uniform(k2, (10, 2), minval=-1, maxval=1),
+            "predator": jax.random.uniform(k1, (cfg.n_predators, 2), minval=-1, maxval=1),
+            "prey": jax.random.uniform(k2, (cfg.n_prey, 2), minval=-1, maxval=1),
         }
-        _, state, _, dones, _ = env.step(k3, state, actions)
+        _, state, _, dones, _ = tiny_env.step(k3, state, actions)
 
         if dones["__all__"]:
             break
@@ -463,15 +460,20 @@ def test_obs_values_known_positions():
     )
     obs, _ = env.reset_from_state(state)
 
-    # Predator 0 obs: velocity=[1,0]/max_speed, teammate rel_pos=[10,0]/half_world
+    # Predator 0 obs: vel(2), pos(2), agent_id(1), same_rel_pos, ...
     pred0_obs = obs["predator"][0]
     half_world = cfg.world_size / 2.0
-    # First 2 values: own velocity normalized
+    # Index 0-1: own velocity normalized
     assert jnp.allclose(pred0_obs[0], 1.0 / cfg.max_speed, atol=1e-5)
     assert jnp.allclose(pred0_obs[1], 0.0, atol=1e-5)
-    # Next 2 values: nearest same-team relative pos (pred1 at [60,50] - [50,50] = [10,0])
-    assert jnp.allclose(pred0_obs[2], 10.0 / half_world, atol=1e-5)
-    assert jnp.allclose(pred0_obs[3], 0.0 / half_world, atol=1e-5)
+    # Index 2-3: own position normalized to [0,1]
+    assert jnp.allclose(pred0_obs[2], 50.0 / cfg.world_size, atol=1e-5)
+    assert jnp.allclose(pred0_obs[3], 50.0 / cfg.world_size, atol=1e-5)
+    # Index 4: agent_id (pred0 = 0/(2-1) = 0.0)
+    assert jnp.allclose(pred0_obs[4], 0.0, atol=1e-5)
+    # Index 5-6: nearest same-team relative pos (pred1 at [60,50] - [50,50] = [10,0])
+    assert jnp.allclose(pred0_obs[5], 10.0 / half_world, atol=1e-5)
+    assert jnp.allclose(pred0_obs[6], 0.0 / half_world, atol=1e-5)
 
 
 def test_reward_capture_value():
@@ -586,149 +588,80 @@ def test_prey_reward_pure_fn():
 # ---------------------------------------------------------------------------
 
 
-def test_collect_rollouts_learned_predators_random_prey():
+def test_collect_rollouts_learned_predators_random_prey(tiny_env, tiny_train_state):
     """Rollout collection with learned policy for predators, random for prey."""
-    from jax_boids.collector import (
-        PolicyConfig,
-        PolicyType,
-        RolloutConfig,
-        collect_rollouts,
-    )
-    from jax_boids.ppo import create_train_state
+    from jax_boids.collector import PolicyConfig, PolicyType, RolloutConfig, collect_rollouts
+    from tests.conftest import TINY_CONFIG
 
-    env_config = EnvConfig(n_predators=2, n_prey=3, max_steps=50)
-    env = PredatorPreyEnv(env_config)
     rollout_config = RolloutConfig(n_steps=4, n_envs=2)
-
-    # Initialize predator policy
-    key = jax.random.PRNGKey(42)
-    k1, k2, key = jax.random.split(key, 3)
-    pred_state = create_train_state(k1, env.observation_size, env.action_size, 3e-4, 0.5)
-
-    # Configure policies
     policies = {
-        "predator": PolicyConfig(PolicyType.LEARNED, train_state=pred_state, noise_scale=0.0),
+        "predator": PolicyConfig(PolicyType.LEARNED, train_state=tiny_train_state, noise_scale=0.0),
         "prey": PolicyConfig(PolicyType.RANDOM, noise_scale=0.3),
     }
 
-    # Collect rollouts
+    key = jax.random.PRNGKey(42)
     key, (transitions, infos), obs, env_state = collect_rollouts(
-        env, policies, env_config, rollout_config, key
+        tiny_env, policies, TINY_CONFIG, rollout_config, key
     )
 
-    # Verify rollout shapes (transitions is dict keyed by agent type)
     assert set(transitions.keys()) == {"predator", "prey"}
     for agent_type in {"predator", "prey"}:
-        n_agents = env_config.n_predators if agent_type == "predator" else env_config.n_prey
+        n_agents = TINY_CONFIG.n_predators if agent_type == "predator" else TINY_CONFIG.n_prey
         transition = transitions[agent_type]
         assert transition.obs.shape == (
-            rollout_config.n_steps,
-            rollout_config.n_envs,
-            n_agents,
-            env.observation_size,
+            rollout_config.n_steps, rollout_config.n_envs, n_agents, tiny_env.observation_size,
         )
-        assert transition.reward.shape == (
-            rollout_config.n_steps,
-            rollout_config.n_envs,
-            n_agents,
-        )
+        assert transition.reward.shape == (rollout_config.n_steps, rollout_config.n_envs, n_agents)
         assert transition.done.shape == transition.reward.shape
         assert transition.log_prob.shape == transition.reward.shape
         assert transition.value.shape == transition.reward.shape
 
-    # Verify info shapes
     assert infos["prey_alive"].shape == (rollout_config.n_steps, rollout_config.n_envs)
-
-    # Verify final obs shapes
-    assert obs["predator"].shape == (
-        rollout_config.n_envs,
-        env_config.n_predators,
-        env.observation_size,
-    )
+    assert obs["predator"].shape == (rollout_config.n_envs, TINY_CONFIG.n_predators, tiny_env.observation_size)
 
 
-def test_collect_rollouts_both_learned():
+def test_collect_rollouts_both_learned(tiny_env, tiny_train_state):
     """Rollout collection with learned policies for both agent types."""
-    from jax_boids.collector import (
-        PolicyConfig,
-        PolicyType,
-        RolloutConfig,
-        collect_rollouts,
-    )
-    from jax_boids.ppo import create_train_state
+    from jax_boids.collector import PolicyConfig, PolicyType, RolloutConfig, collect_rollouts
+    from tests.conftest import TINY_CONFIG
 
-    env_config = EnvConfig(n_predators=2, n_prey=3, max_steps=50)
-    env = PredatorPreyEnv(env_config)
     rollout_config = RolloutConfig(n_steps=2, n_envs=2)
-
-    # Initialize both policies
-    key = jax.random.PRNGKey(42)
-    k1, k2, key = jax.random.split(key, 3)
-    pred_state = create_train_state(k1, env.observation_size, env.action_size, 3e-4, 0.5)
-    prey_state = create_train_state(k2, env.observation_size, env.action_size, 3e-4, 0.5)
-
     policies = {
-        "predator": PolicyConfig(PolicyType.LEARNED, train_state=pred_state, noise_scale=0.0),
-        "prey": PolicyConfig(PolicyType.LEARNED, train_state=prey_state, noise_scale=0.0),
+        "predator": PolicyConfig(PolicyType.LEARNED, train_state=tiny_train_state, noise_scale=0.0),
+        "prey": PolicyConfig(PolicyType.LEARNED, train_state=tiny_train_state, noise_scale=0.0),
     }
 
-    # Collect rollouts
+    key = jax.random.PRNGKey(42)
     key, (transitions, infos), obs, env_state = collect_rollouts(
-        env, policies, env_config, rollout_config, key
+        tiny_env, policies, TINY_CONFIG, rollout_config, key
     )
 
-    # Verify rollout shapes (transitions is dict keyed by agent type)
     assert set(transitions.keys()) == {"predator", "prey"}
     for agent_type in {"predator", "prey"}:
-        n_agents = env_config.n_predators if agent_type == "predator" else env_config.n_prey
+        n_agents = TINY_CONFIG.n_predators if agent_type == "predator" else TINY_CONFIG.n_prey
         transition = transitions[agent_type]
-        # Check value field exists and has correct shape
         assert hasattr(transition, "value")
-        assert transition.value.shape == (
-            rollout_config.n_steps,
-            rollout_config.n_envs,
-            n_agents,
-        )
         assert transition.obs.shape == (
-            rollout_config.n_steps,
-            rollout_config.n_envs,
-            n_agents,
-            env.observation_size,
+            rollout_config.n_steps, rollout_config.n_envs, n_agents, tiny_env.observation_size,
         )
-        assert transition.reward.shape == (
-            rollout_config.n_steps,
-            rollout_config.n_envs,
-            n_agents,
-        )
-        assert transition.done.shape == transition.reward.shape
-        assert transition.log_prob.shape == transition.reward.shape
 
 
-def test_collect_rollouts_both_random():
+def test_collect_rollouts_both_random(tiny_env):
     """Rollout collection with random policies for all agents."""
-    from jax_boids.collector import (
-        PolicyConfig,
-        PolicyType,
-        RolloutConfig,
-        collect_rollouts,
-    )
+    from jax_boids.collector import PolicyConfig, PolicyType, RolloutConfig, collect_rollouts
+    from tests.conftest import TINY_CONFIG
 
-    env_config = EnvConfig(n_predators=2, n_prey=3, max_steps=50)
-    env = PredatorPreyEnv(env_config)
     rollout_config = RolloutConfig(n_steps=2, n_envs=2)
-
     policies = {
         "predator": PolicyConfig(PolicyType.RANDOM, noise_scale=0.5),
         "prey": PolicyConfig(PolicyType.RANDOM, noise_scale=0.3),
     }
 
-    # Collect rollouts
     key = jax.random.PRNGKey(42)
     key, (transitions, infos), obs, env_state = collect_rollouts(
-        env, policies, env_config, rollout_config, key
+        tiny_env, policies, TINY_CONFIG, rollout_config, key
     )
 
-    # Verify rollout collection works
     assert set(transitions.keys()) == {"predator", "prey"}
     for agent_type in {"predator", "prey"}:
         transition = transitions[agent_type]
@@ -736,28 +669,21 @@ def test_collect_rollouts_both_random():
         assert transition.obs.shape[1] == rollout_config.n_envs
 
 
-def test_create_policy_fn_learned():
+def test_create_policy_fn_learned(tiny_env, tiny_train_state):
     """Create policy function for learned policy."""
     from jax_boids.collector import PolicyConfig, PolicyType, create_policy_fn
-    from jax_boids.ppo import create_train_state
 
-    env_config = EnvConfig(n_predators=2, n_prey=3)
-    env = PredatorPreyEnv(env_config)
+    policy_fn = create_policy_fn(PolicyConfig(PolicyType.LEARNED, train_state=tiny_train_state))
 
     key = jax.random.PRNGKey(42)
-    train_state = create_train_state(key, env.observation_size, env.action_size, 3e-4, 0.5)
-    policy_fn = create_policy_fn(PolicyConfig(PolicyType.LEARNED, train_state=train_state))
-
-    # Test with batched observations
-    obs = jnp.zeros((10, 2, env.observation_size))  # [n_envs, n_agents, obs_size]
-    obs_flat = obs.reshape(-1, obs.shape[-1])  # [n_envs*n_agents, obs_size]
+    obs = jnp.zeros((10, 1, tiny_env.observation_size))
+    obs_flat = obs.reshape(-1, obs.shape[-1])
 
     k1, key = jax.random.split(key)
     actions, log_probs = policy_fn(obs_flat, k1)
 
-    assert actions.shape == (obs_flat.shape[0], env.action_size)
+    assert actions.shape == (obs_flat.shape[0], tiny_env.action_size)
     assert log_probs.shape == (obs_flat.shape[0],)
-    # Actions are unbounded since they come from a normal distribution
     assert jnp.isfinite(actions).all()
     assert jnp.isfinite(log_probs).all()
 

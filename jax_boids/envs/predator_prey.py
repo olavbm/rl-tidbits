@@ -136,6 +136,10 @@ class PredatorPreyEnv:
         prey_max_speed = getattr(cfg, "prey_speed_mult", 1.0) * cfg.max_speed
         new_prey_vel = clip_velocity(new_prey_vel, prey_max_speed)
 
+        # Zero out dead prey velocity so they freeze in place
+        alive_mask = state.prey_alive[:, None]  # [n_prey, 1]
+        new_prey_vel = jnp.where(alive_mask, new_prey_vel, 0.0)
+
         # Update positions
         new_pred_pos = state.predator_pos + new_pred_vel * cfg.dt
         new_prey_pos = state.prey_pos + new_prey_vel * cfg.dt
@@ -292,6 +296,7 @@ class PredatorPreyEnv:
         enemy_rel_pos = enemy_rel_pos / half_world
         enemy_rel_vel = enemy_rel_vel / cfg.max_speed
         my_vel_norm = my_vel / cfg.max_speed
+        my_pos_norm = my_pos / ws  # normalized to [0, 1]
 
         # Agent index normalized to [0, 1] — lets shared-weight agents differentiate
         agent_id = jnp.where(n_same_team > 1, agent_idx / (n_same_team - 1), 0.0)
@@ -299,6 +304,7 @@ class PredatorPreyEnv:
         return jnp.concatenate(
             [
                 my_vel_norm,
+                my_pos_norm,
                 jnp.array([agent_id]),
                 same_rel_pos.flatten(),
                 same_rel_vel.flatten(),

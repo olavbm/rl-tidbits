@@ -15,6 +15,23 @@ from jax_boids.ppo import make_distribution
 from jax_boids.visualize import animate_episode
 
 
+def _infer_hidden_dims(params) -> tuple[int, ...]:
+    """Infer hidden layer sizes from checkpoint params."""
+    dims = []
+    i = 0
+    while True:
+        key = f"Dense_{i}"
+        if key not in params.get("params", {}):
+            break
+        kernel = params["params"][key]["kernel"]
+        dims.append(kernel.shape[1])
+        i += 1
+    # Last Dense layers are actor/critic heads, not hidden
+    # Hidden layers have tanh activation, heads don't — but we can't tell from params alone.
+    # Convention: all but last 2 Dense layers are hidden (action_mean head + value head)
+    return tuple(dims[:-2]) if len(dims) > 2 else (64, 64)
+
+
 def load_checkpoint(run_dir: str):
     """Load params and configs from a training run.
 
@@ -110,8 +127,11 @@ def run_episode(
     Returns:
         List of states for visualization
     """
-    pred_network = ActorCritic(action_dim=env.action_size) if pred_params is not None else None
-    prey_network = ActorCritic(action_dim=env.action_size) if prey_params is not None else None
+    # Infer hidden dims from checkpoint structure
+    pred_hidden = _infer_hidden_dims(pred_params) if pred_params is not None else (64, 64)
+    prey_hidden = _infer_hidden_dims(prey_params) if prey_params is not None else (64, 64)
+    pred_network = ActorCritic(action_dim=env.action_size, hidden_dims=pred_hidden) if pred_params is not None else None
+    prey_network = ActorCritic(action_dim=env.action_size, hidden_dims=prey_hidden) if prey_params is not None else None
 
     key = jax.random.PRNGKey(seed)
     _, state = env.reset(key)

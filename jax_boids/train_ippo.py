@@ -6,7 +6,10 @@ and batch logging (no CPU-GPU sync during training).
 """
 
 import json
+import logging
 from typing import NamedTuple
+
+logger = logging.getLogger(__name__)
 
 import chex
 import jax
@@ -255,16 +258,16 @@ def train(
             )
 
     if verbose:
-        print("IPPO training: both predators and prey learn")
-        print(f"  {env_config.n_predators} predators, {env_config.n_prey} prey")
-        print(f"  pred lr={config.lr:.2e}, prey lr={prey_hp['lr']:.2e}")
-        print(f"  pred ent={config.ent_coef:.3f}, prey ent={prey_hp['ent_coef']:.3f}")
-        print(f"Training for {config.total_timesteps:,} steps ({n_updates} updates)")
+        logger.info("IPPO training: both predators and prey learn")
+        logger.info("  %d predators, %d prey", env_config.n_predators, env_config.n_prey)
+        logger.info("  pred lr=%.2e, prey lr=%.2e", config.lr, prey_hp['lr'])
+        logger.info("  pred ent=%.3f, prey ent=%.3f", config.ent_coef, prey_hp['ent_coef'])
+        logger.info("Training for %s steps (%d updates)", f"{config.total_timesteps:,}", n_updates)
         if writer is not None:
-            print(f"Logging to {writer.logdir}")
-        print("Compiling training function...")
+            logger.info("Logging to %s", writer.logdir)
+        logger.info("Compiling training function...")
     else:
-        print(f"IPPO training: {config.total_timesteps:,} steps ({n_updates} updates)")
+        logger.info("IPPO training: %s steps (%d updates)", f"{config.total_timesteps:,}", n_updates)
 
     # Init outside JIT so orthogonal_init/lr_anneal don't trigger recompilation
     key = jax.random.PRNGKey(seed)
@@ -279,6 +282,7 @@ def train(
         total_updates=n_updates if config.lr_anneal else None,
         orthogonal_init=config.orthogonal_init,
         min_lr=config.min_lr,
+        hidden_dims=(64, 64, 64),
     )
     prey_state = create_train_state(
         k2,
@@ -347,17 +351,17 @@ def train(
         checkpointer.save(str(pred_ckpt_dir), runner_state.pred_state.params, force=True)
         checkpointer.save(str(prey_ckpt_dir), runner_state.prey_state.params, force=True)
         if verbose:
-            print(f"Saved predator checkpoint to {pred_ckpt_dir}")
-            print(f"Saved prey checkpoint to {prey_ckpt_dir}")
+            logger.info("Saved predator checkpoint to %s", pred_ckpt_dir)
+            logger.info("Saved prey checkpoint to %s", prey_ckpt_dir)
 
     if writer is not None:
         writer.close()
 
     if verbose:
-        print("Training complete!")
-        print(f"  Pred policy_loss: {metrics['pred_policy_loss'][-1]:.4f}")
-        print(f"  Prey policy_loss: {metrics['prey_policy_loss'][-1]:.4f}")
-        print(f"  Final prey_alive: {metrics['prey_alive'][-1]:.1f}")
+        logger.info("Training complete!")
+        logger.info("  Pred policy_loss: %.4f", metrics['pred_policy_loss'][-1])
+        logger.info("  Prey policy_loss: %.4f", metrics['prey_policy_loss'][-1])
+        logger.info("  Final prey_alive: %.1f", metrics['prey_alive'][-1])
 
     return runner_state, metrics
 

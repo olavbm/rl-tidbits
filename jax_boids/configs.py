@@ -1,7 +1,10 @@
 """Named hyperparameter configs for validation and iteration."""
 
+import logging
 from dataclasses import dataclass
 from typing import Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass

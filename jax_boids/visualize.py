@@ -60,10 +60,9 @@ def render_state(
 
     alive_pos = prey_pos[alive]
     alive_vel = prey_vel[alive]
-    dead_pos = prey_pos[~alive]
 
     ax.scatter(
-        alive_pos[:, 0], alive_pos[:, 1], c="cyan", s=60, marker="o", label="Prey (alive)", zorder=3
+        alive_pos[:, 0], alive_pos[:, 1], c="cyan", s=60, marker="o", label="Prey", zorder=3
     )
     if show_velocity and len(alive_pos) > 0:
         ax.quiver(
@@ -75,19 +74,6 @@ def render_state(
             scale=30,
             alpha=0.7,
             zorder=2,
-        )
-
-    # Draw dead prey (gray, faded)
-    if len(dead_pos) > 0:
-        ax.scatter(
-            dead_pos[:, 0],
-            dead_pos[:, 1],
-            c="gray",
-            s=30,
-            marker="x",
-            alpha=0.5,
-            label="Prey (dead)",
-            zorder=1,
         )
 
     ax.legend(loc="upper right", fontsize=8)
