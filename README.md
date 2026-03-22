@@ -4,11 +4,11 @@ Reinforcement learning experiments in JAX.
 
 ## Predator-Prey with IPPO
 
-Multi-agent predator-prey environment trained with Independent PPO (IPPO). Two predators with shared network weights learn to hunt five independently-learning prey on a 10x10 toroidal grid. Everything is JAX — environment, PPO, training loop — compiled into a single `jax.lax.scan` with no CPU-GPU sync during training.
+Multi-agent predator-prey environment trained with Independent PPO (IPPO). Predators with shared network weights learn to hunt independently-learning prey on a toroidal grid. Everything is JAX — environment, PPO, training loop — compiled into a single `jax.lax.scan` with no CPU-GPU sync during training.
 
-![IPPO predator-prey](media/ippo_predator_prey.gif)
+![IPPO predator-prey](media/ippo_100m.gif)
 
-*2 predators (red) vs 5 prey (blue), both sides learning via IPPO. Captured prey shown as grey X marks.*
+*5 predators (red) vs 100 prey (blue), both sides learning via IPPO on a 50x50 world. 100M steps. Captured prey shown as grey X marks.*
 
 ### Running
 
